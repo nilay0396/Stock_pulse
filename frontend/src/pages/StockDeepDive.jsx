@@ -494,7 +494,10 @@ export default function StockDeepDive() {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { if (pick?.symbol) runFetch(pick.symbol); /* eslint-disable-next-line */ }, [pick]);
+  useEffect(() => {
+    if (pick?.symbol) runFetch(pick.symbol);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pick]);
 
   const onPick = (r) => setPick(r);
 
