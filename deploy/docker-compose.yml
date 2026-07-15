@@ -1,0 +1,34 @@
+# =========== Reference docker-compose for self-hosting ===========
+# Not used by the Emergent preview. Rename to docker-compose.yml and run:
+#   docker compose up -d --build
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes: [mongo_data:/data/db]
+
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+    env_file: .env.production
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: market_pulse_india
+    depends_on: [mongo]
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.frontend
+    environment:
+      REACT_APP_BACKEND_URL: https://your-domain.tld
+    ports: ["80:80"]
+    depends_on: [backend]
+    restart: unless-stopped
+
+volumes:
+  mongo_data: {}

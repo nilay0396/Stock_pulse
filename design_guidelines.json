@@ -1,0 +1,199 @@
+{
+  "domain": "Finance / Market Intelligence",
+  "theme": "DARK",
+  "archetype": "Archetype 4: Swiss & High-Contrast (Institutional Trading Variant)",
+  "rationale": "Trading terminals need high density, precision, and low eye strain. Dark theme with strict grid layouts and monospaced data alignment provides an institutional Bloomberg/Koyfin-caliber experience.",
+  "colors": {
+    "dark": {
+      "background": "#050505",
+      "surface": "#0C0C0E",
+      "surface_elevated": "#141417",
+      "border": "#1F1F24",
+      "border_active": "#363640",
+      "text_primary": "#F4F4F5",
+      "text_secondary": "#A1A1AA",
+      "text_muted": "#71717A",
+      "primary": "#E4E4E7",
+      "primary_hover": "#FFFFFF",
+      "primary_active": "#D4D4D8",
+      "semantic": {
+        "bullish": "#00A36C",
+        "bullish_bg": "rgba(0, 163, 108, 0.1)",
+        "bearish": "#DC2626",
+        "bearish_bg": "rgba(220, 38, 38, 0.1)",
+        "watch": "#D97706",
+        "watch_bg": "rgba(217, 119, 6, 0.1)",
+        "avoid": "#52525B",
+        "avoid_bg": "rgba(82, 82, 91, 0.1)"
+      }
+    },
+    "light": {
+      "background": "#FAFAFA",
+      "surface": "#FFFFFF",
+      "surface_elevated": "#F4F4F5",
+      "border": "#E4E4E7",
+      "border_active": "#D4D4D8",
+      "text_primary": "#09090B",
+      "text_secondary": "#52525B",
+      "text_muted": "#A1A1AA",
+      "primary": "#18181B",
+      "primary_hover": "#000000",
+      "primary_active": "#27272A",
+      "semantic": {
+        "bullish": "#059669",
+        "bullish_bg": "rgba(5, 150, 105, 0.1)",
+        "bearish": "#B91C1C",
+        "bearish_bg": "rgba(185, 28, 28, 0.1)",
+        "watch": "#D97706",
+        "watch_bg": "rgba(217, 119, 6, 0.1)",
+        "avoid": "#71717A",
+        "avoid_bg": "rgba(113, 113, 122, 0.1)"
+      }
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Chivo",
+      "body": "Manrope",
+      "mono": "JetBrains Mono"
+    },
+    "rules": {
+      "h1": "text-3xl md:text-4xl font-black tracking-tight",
+      "h2": "text-xl md:text-2xl font-bold tracking-tight",
+      "h3": "text-lg md:text-xl font-bold",
+      "body": "text-sm text-text_secondary leading-relaxed",
+      "data_table": "font-mono text-xs md:text-sm tracking-tight",
+      "overline": "text-[10px] md:text-xs uppercase tracking-[0.2em] font-bold text-text_muted"
+    }
+  },
+  "spacing_and_layout": {
+    "strategy": "The 'Control Room' Grid",
+    "base_grid": "grid-cols-1 md:grid-cols-4 lg:grid-cols-12 gap-1 md:gap-4",
+    "card_padding": "p-3 md:p-4",
+    "container_padding": "p-4 md:p-6 lg:p-8",
+    "border_radius": "rounded-sm md:rounded-md",
+    "borders": "border border-border",
+    "data_density": "High density, strict tabular alignment, no loose white space. Numeric columns must right-align."
+  },
+  "components": {
+    "surface": {
+      "type": "Grid Borders (The Technical Look)",
+      "classes": "bg-surface border-border border-collapse"
+    },
+    "cards": {
+      "style": "Flat, pure structural boundaries, no shadows. 1px solid border. Cardless feeling where possible.",
+      "hover": "bg-surface_elevated transition-colors"
+    },
+    "tables": {
+      "header": "text-[10px] uppercase font-bold tracking-wider text-text_muted border-b border-border bg-background/50",
+      "row": "border-b border-border/50 hover:bg-surface_elevated transition-colors",
+      "cell": "py-2 px-3 align-middle",
+      "numeric_cell": "font-mono text-right tabular-nums"
+    },
+    "buttons": {
+      "primary": "bg-primary text-background font-bold tracking-tight rounded-sm px-4 py-2 hover:bg-primary_hover transition-colors",
+      "outline": "border border-border bg-transparent hover:bg-surface_elevated text-text_primary transition-colors rounded-sm px-4 py-2",
+      "ghost": "bg-transparent hover:bg-surface_elevated text-text_secondary hover:text-text_primary rounded-sm transition-colors"
+    },
+    "badges": {
+      "base": "px-2 py-0.5 text-[10px] font-mono rounded-sm border",
+      "bullish": "bg-bullish_bg text-bullish border-bullish/20",
+      "bearish": "bg-bearish_bg text-bearish border-bearish/20",
+      "watch": "bg-watch_bg text-watch border-watch/20",
+      "avoid": "bg-avoid_bg text-avoid border-avoid/20"
+    }
+  },
+  "motion": {
+    "interactions": "Minimal and instantaneous. Fast transitions (100ms) for hover states. No bouncy animations.",
+    "page_load": "Fade-in with a very slight upward slide (duration-300 ease-out). Staggered row reveals in tables for data loading."
+  },
+  "icons": {
+    "library": "@phosphor-icons/react",
+    "style": "Duotone or bold. Use strict geometric icons. Avoid playful icons."
+  },
+  "testing": {
+    "data_testid_rule": "All interactive and key informational elements MUST include a data-testid attribute in kebab-case."
+  },
+  "pages": {
+    "Dashboard": {
+      "layout": "Bento Grid Variant for Dashboards",
+      "components": [
+        "Macro Top Bar (NIFTY, VIX, USDINR ticker with mono font)",
+        "Daily Morning Report Summary Card (span 8)",
+        "Sector Heatmap Grid (span 4)",
+        "Top Trade Ideas Quick Table"
+      ]
+    },
+    "Trade_Ideas": {
+      "layout": "Full-width data table",
+      "components": [
+        "Filter Bar (Horizon, Direction, Sector)",
+        "Dense Data Table (Symbol, Direction, Horizon, Conviction Bar, Entry, Stop, Target, Risk)"
+      ]
+    },
+    "Stock_Detail": {
+      "layout": "2-column uneven split (8 col main, 4 col sidebar)",
+      "components": [
+        "Price Chart (Candlestick placeholder area)",
+        "Conviction Score Ring",
+        "Fundamental Sub-scores Radar/Bar",
+        "Recent Events/News List"
+      ]
+    },
+    "Macro": {
+      "layout": "Grid of charts",
+      "components": [
+        "NIFTY 50 Chart",
+        "FII/DII Flow Bar Chart",
+        "Commodity Sparks (Crude, Gold)",
+        "Yield Curve"
+      ]
+    },
+    "Admin_Connectors": {
+      "layout": "List/Table hybrid",
+      "components": [
+        "Connector Health Status (Green/Red dots)",
+        "Last Ingestion Run timestamp",
+        "Manual Sync Buttons",
+        "Logs Viewer Modal"
+      ]
+    },
+    "Preferences": {
+      "layout": "Narrow centered form or 2-column settings layout",
+      "components": [
+        "Telegram Chat ID Input",
+        "Email Input",
+        "Delivery Time Dropdown",
+        "Risk Appetite Toggle"
+      ]
+    },
+    "Login": {
+      "layout": "Split screen. Left: Abstract dark texture. Right: Minimalist authentication form.",
+      "components": [
+        "Email/Password form",
+        "SSO Buttons",
+        "Branding Title: Market Pulse India"
+      ]
+    }
+  },
+  "media": {
+    "image_urls": [
+      {
+        "url": "https://images.unsplash.com/photo-1761078739436-ccee01f3d89c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2ODl8MHwxfHNlYXJjaHwzfHxkYXJrJTIwYWJzdHJhY3QlMjB0ZXh0dXJlfGVufDB8fHx8MTc3Njc3MjA5OXww&ixlib=rb-4.1.0&q=85",
+        "category": "background",
+        "description": "Dark moody abstract background for the Login split screen"
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Install required dependencies: yarn add @phosphor-icons/react recharts",
+    "Use Shadcn UI components extensively, but strip their default rounding and heavy shadows.",
+    "Data tables must be dense with strict tabular-nums class for any pricing or percentage data.",
+    "Conviction score (0-100) should be visualized using a horizontal progress bar with semantic coloring (green for high, amber for mid, red for low depending on trade direction).",
+    "All cards must have sharp corners (max 4px radius) and 1px borders to mimic institutional terminals.",
+    "For Indian Rupee, strictly use '₹' symbol.",
+    "Ensure the 'data-testid' is added to every button, link, and form input (e.g., data-testid='login-submit-button').",
+    "Use standard JSON fetching placeholders if live data is not available, mock heavily to show UI.",
+    "Implement light and dark mode toggles if possible, but the app MUST default to dark theme."
+  ]
+}

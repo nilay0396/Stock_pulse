@@ -1,0 +1,81 @@
+{
+  "summary": "First testing iteration — Market Pulse India. Ran 36 pytest cases (35 PASS, 1 FAIL) + frontend smoke. Admin login, run-sync pipeline, ideas/scores, macro, news, deliveries (dry-run), admin gating, scheduler, settings round-trip, seed-universe idempotent, role+reset-password flow all pass. Frontend auth works; dashboard, trade ideas, macro, news, deliveries, preferences, all admin pages render.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/reports/history",
+        "issue": "Returns 500 — PydanticSerializationError: 'Unable to serialize unknown type: <class bson.objectid.ObjectId>'. The projection {'_id':0,'summary.macro':0} does not strip nested ObjectId fields inside the stored report_run doc. Consequence: frontend Report History page cannot render any history list.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Sidebar Nav",
+        "issue": "No route registered for '/history' (router warning: 'No routes matched location /history'). Clicking Report History leads to a blank page. Either App.js is missing the route OR the Layout link points to the wrong path.",
+        "selector": "Layout.jsx Report History link",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Sidebar Nav",
+        "issue": "Missing data-testid=nav-stocks on the 'Stock Explorer' link (the link exists and routes correctly, but the testid called out in the review_request is absent).",
+        "selector": "nav Stock Explorer",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "Sidebar Nav",
+        "issue": "Missing data-testid=nav-history on Report History link.",
+        "selector": "nav Report History",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "Preferences page",
+        "issue": "Missing data-testid=prefs-save-btn on the 'Save Preferences' button and missing data-testid=sector-chip-<sector> on sector chips. Buttons render & function, but automation selectors listed in the review_request are not present.",
+        "selector": "Preferences.jsx",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Report History page → /api/reports/history",
+        "issue": "Backend returns 500 (ObjectId serialization). UI shows blank; no error toast surfaced.",
+        "affected_selectors": ["Report History page"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "FIX BACKEND: in /app/backend/routes/reports.py history(), post-process docs to strip any ObjectId (e.g. iterate rows and recursively remove/stringify ObjectId; or project all primitives explicitly; or drop `summary` entirely from the history response). Simplest: fetch with {'_id':0} and pop/convert macro_snapshot. Root cause: macro_snapshot or another nested field contains raw bson.ObjectId that the `_id:0, summary.macro:0` projection does not reach.",
+    "FIX ROUTING: add the '/history' route (or whichever path Report History nav link uses) to /app/frontend/src/App.js; OR update Layout.jsx link to the correct path.",
+    "ADD data-testids: nav-stocks, nav-history on Layout.jsx side-nav; prefs-save-btn, sector-chip-<sector> on Preferences.jsx, per review_request contract."
+  ],
+  "critical_code_review_comments": [
+    "routes/reports.py: history() projection mixes exclusion-only but does not strip nested ObjectId — use {'_id':0} and always sanitize before returning, or store no ObjectId-typed field in first place.",
+    "routes/preferences.py: DEFAULT_PREFS written twice-ish pattern is fine, but on first GET (no doc) returned dict is missing 'updated_at' — acceptable but inconsistent with PUT result.",
+    "routes/admin.py: /test/telegram and /test/email accept arbitrary Dict[str,Any] body — would benefit from a Pydantic model for validation.",
+    "routes/reports.py: manual_run spawns background task but discards reference; a small runs-registry would allow polling status (minor)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/__init__.py",
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "97% (35/36)", "frontend": "~85% (core flows render; two testid/route gaps)"},
+  "test_credentials": "admin@marketpulse.in / Admin@12345 (from /app/memory/test_credentials.md) — verified.",
+  "seed_data_creation": "Ran POST /api/reports/run-sync?skip_llm=true during test — produced a fresh report_run (id in logs) and dry-run deliveries. Also created 4 TEST_* throwaway users via /auth/register for auth/role/reset tests.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test file is at /app/backend/tests/backend_test.py (pytest, 36 cases). Run with: `cd /app/backend && python -m pytest tests/backend_test.py -v --junitxml=/app/test_reports/pytest/pytest_results.xml`. The single failing case (TestReports::test_history) is a genuine backend bug (ObjectId serialization in /api/reports/history). Admin login works, run-sync pipeline works in ~30s. Telegram+Gmail correctly stay dry-run. Frontend route '/history' is missing; verify in App.js after main agent fix. Don't set any Telegram/Gmail creds — they MUST remain empty for dry-run contract.",
+  "rca of the issue": {
+    "bug": "GET /api/reports/history → 500 Internal Server Error",
+    "reproduction": "curl -H 'Authorization: Bearer <admin>' '<BASE>/api/reports/history?limit=5' → 500",
+    "stack": "fastapi/_compat.py serialize → pydantic_core PydanticSerializationError: Unable to serialize unknown type: <class 'bson.objectid.ObjectId'>",
+    "root_cause": "routes/reports.py history() uses projection {'_id':0, 'summary.macro':0} but the stored report_run doc contains nested ObjectId(s) at some other path (likely inside macro_snapshot or ideas summary). FastAPI's response serialization then chokes because no json encoder is registered for ObjectId and the projection didn't strip the field.",
+    "mitigation": "1) Store only primitive types when inserting report_run (use str(ObjectId()) or UUID); OR 2) Post-process in the route: def _clean(d): walk dict, convert ObjectId to str; return [_clean(doc) for doc in docs]. The /reports/latest and /reports/{id} endpoints happen to work because those particular docs don't trip the same code path or exclude enough — but the same bug can bite any of them once data shape drifts."
+  }
+}

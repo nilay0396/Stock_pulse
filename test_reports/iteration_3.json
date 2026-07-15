@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 3 validation complete. Backend: 16/16 new focused pytest cases in /app/backend/tests/test_iteration3.py passed (registry returns all 14 connectors incl. 7 new NSE/FMP/FRED; individual runs of nse_sector_indices, nse_corp_announcements, nse_corp_actions, nse_quote, nse_shareholding all return ok=True; fmp_fundamentals & fred_macro skip gracefully with no_api_key; all 6 new /api/flows/* endpoints work — sector-indices returned 100+ rows, corp-announcements/actions both >=1 row, shareholding/RELIANCE returns list, fred returns [] (expected, empty), fmp/RELIANCE returns null (expected, no key); /api/admin/settings round-trips fmp_api_key and fred_api_key; /api/reports/latest summary contains all 6 expected new fields: sector_indices, commodity_impact, insider_highlights, upcoming_actions_total, geo_events, fred_snapshot). Frontend: logged in as nilay0396@gmail.com, /flows page — all 5 tabs (macro, sectors, insider, events, geo) render their respective panels (fii-dii-panel + fred-panel, sector-indices-panel, insider-panel, corp-actions-panel + corp-ann-panel, geo-panel). /admin/settings — settings-fmp-key and settings-fred-key inputs present, dummy values saved, page reloaded, values retrieved correctly, then reverted to empty as required.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3.py",
+    "/app/test_reports/pytest/pytest_iter3.xml"
+  ],
+  "action_items": [
+    "Minor documentation: /app/memory/test_credentials.md still lists admin as admin@marketpulse.in / Admin@12345, but the actually working admin in this environment is nilay0396@gmail.com / Admin@12345 (per review request). Consider updating the credentials file so future testers/agents do not fail on the stale entry."
+  ],
+  "critical_code_review_comments": [
+    "routes/flows.py cleanly projects out _id ({_id: 0}) on every query — good.",
+    "connectors/registry.py exposes exactly 14 connectors, all wired consistently with category/enabled/health snapshot defaults.",
+    "Admin PUT /api/admin/settings correctly persists new fmp_api_key / fred_api_key fields and round-trips through GET — confirmed both via pytest and UI.",
+    "Report summary.py orchestration is producing the full set of new fields (sector_indices, commodity_impact, insider_highlights, upcoming_actions_total, geo_events, fred_snapshot) without regressing existing ones.",
+    "/api/reports/run-sync?skip_llm=true sometimes exceeds the ingress timeout (~60s) and returns a 502 to the client even though the pipeline completes and latest reflects the new report. Not a code bug, but consider either (a) raising ingress timeout for this route, or (b) documenting that clients should poll /reports/latest instead of relying on the synchronous response when the full 14-connector pipeline runs."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3.py (new — 16 focused test cases for iteration 3)"
+  ],
+  "success_rate": {"backend": "100% (16/16 iteration-3 focused)", "frontend": "100% (5 flow tabs + FMP/FRED settings round-trip all verified)"},
+  "test_credentials": "admin = nilay0396@gmail.com / Admin@12345 (working). admin@marketpulse.in in /app/memory/test_credentials.md is STALE and returns 401.",
+  "seed_data_creation": "Ran individual connector endpoints (nse_sector_indices, nse_corp_announcements, nse_corp_actions, nse_quote, nse_shareholding) plus a full /reports/run-sync?skip_llm=true to seed the 6 new Mongo collections (sector_indices_col, corp_ann_col, corp_actions_col, shareholding_col_new, fred_col, fmp_col). FMP & FRED keys intentionally left empty per review.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 3 is fully green. New test suite at /app/backend/tests/test_iteration3.py is reusable as regression. Admin credentials: nilay0396@gmail.com / Admin@12345. The old /app/backend/tests/backend_test.py still uses admin@marketpulse.in which no longer works — that suite will need its ADMIN_EMAIL updated (or the seed to be re-run with the original admin) before it can be rerun. FMP/FRED keys MUST remain empty for this iteration's skip-gracefully contract. NSE endpoints occasionally 403 (transient) — my tests already retry once. /reports/run-sync can exceed ingress timeout on first run; the latest-report fallback path is already handled in the test.",
+  "rca of the issue": "No bugs found in iteration 3. Only stale file: /app/memory/test_credentials.md lists admin@marketpulse.in, but the seeded/live admin is nilay0396@gmail.com. Suggest updating the credentials file."
+}

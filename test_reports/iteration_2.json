@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 2 focused re-test after main-agent fixes. All targeted bugs from iteration_1 are resolved. Backend: ran 9 focused pytest cases (admin login, reports/latest, reports/history, reports/{id}, ideas, scores, macro, deliveries, run-sync skip_llm) — 9/9 PASSED in ~16s. Frontend: logged in as admin, validated all newly-added data-testids (nav-stocks, nav-history, prefs-save-btn, sector-chip-<Sector>), confirmed the /history alias route renders Report History, exercised save-preferences flow end-to-end (toggled sector-chip-Banking + clicked prefs-save-btn → 'Preferences saved' toast observed), and sanity-checked Stock Explorer.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_iter2.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "utils/clean() correctly handles dict/list/tuple/ObjectId and drops any top-level _id recursively — good central fix. Consider also serializing datetime to ISO string for uniformity if any legacy docs ever lack the Pydantic encoder path.",
+    "routes/reports.py history() still does summary.pop('macro', None) before clean(); fine, but consider projecting that out of the DB read instead to reduce bytes over the wire.",
+    "No regression: /reports/latest and /reports/{id} also use clean() now — consistent and defensive."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (9/9 focused; prior full-suite was 36/36 projected)", "frontend": "100% (all targeted testids + alias route + save flow verified)"},
+  "test_credentials": "admin@marketpulse.in / Admin@12345 — verified working.",
+  "seed_data_creation": "No new seed data created in this iteration; reused data from iteration_1 run-sync. One run-sync?skip_llm=true invocation executed by pytest TestRunSync (success).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 2 closed out the two blockers from iter1: (1) /api/reports/history ObjectId 500 — fixed via new /app/backend/utils/__init__.py clean() helper applied in routes/reports.py; (2) missing testids (nav-stocks, nav-history, prefs-save-btn, sector-chip-*) and missing /history alias route in App.js — all present and working. Full pytest suite is at /app/backend/tests/backend_test.py (36 cases). Telegram/Gmail correctly remain in DRY-RUN (unchanged). No outstanding issues.",
+  "rca of the issue": {
+    "bug_from_prev_iter": "GET /api/reports/history returned 500 due to nested bson.ObjectId inside report_run doc that projection did not strip",
+    "fix_applied_by_main_agent": "Added /app/backend/utils/__init__.py::clean() — a recursive sanitizer that converts ObjectId→str, drops any key literally named '_id', and descends through dicts/lists/tuples. routes/reports.py now wraps every returned doc (history, latest, {id}, run-sync) with clean(doc).",
+    "verification": "pytest TestReports::test_history now PASSES; browser confirms /reports (nav-history) and /history (alias) render the Report History page without error."
+  }
+}

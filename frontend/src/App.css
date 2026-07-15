@@ -1,0 +1,2 @@
+/* intentionally minimal — styles are in index.css */
+.App { min-height: 100vh; background: var(--bg); color: var(--text-primary); }
