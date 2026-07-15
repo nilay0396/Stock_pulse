@@ -30,7 +30,7 @@ authRoutes.post("/register", async (c) => {
     .maybeSingle();
   if (lookupError) {
     console.error("register: lookup failed", lookupError);
-    return c.json({ detail: "Registration failed", debug: lookupError.message }, 500);
+    return c.json({ detail: "Registration failed" }, 500);
   }
   if (existing) return c.json({ detail: "Email already registered" }, 409);
 
@@ -45,7 +45,7 @@ authRoutes.post("/register", async (c) => {
 
   if (error || !user) {
     console.error("register: insert failed", error);
-    return c.json({ detail: "Registration failed", debug: error?.message }, 500);
+    return c.json({ detail: "Registration failed" }, 500);
   }
 
   const token = createToken(user.id, user.role);
@@ -65,7 +65,7 @@ authRoutes.post("/login", async (c) => {
 
   if (error) {
     console.error("login: lookup failed", error);
-    return c.json({ detail: "Login failed", debug: error.message }, 500);
+    return c.json({ detail: "Login failed" }, 500);
   }
 
   if (!user || !(await verifyPassword(password, user.password_hash))) {
