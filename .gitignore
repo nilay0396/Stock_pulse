@@ -29,6 +29,7 @@ next-env.d.ts
 /build
 dist/
 dist
+netlify/functions-dist/
 
 # Environment files (comprehensive coverage)
 
