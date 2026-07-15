@@ -1,8 +1,13 @@
 [build]
   base = "frontend"
-  command = "yarn build"
+  # Build the frontend, then install + bundle the Netlify Function ourselves
+  # (esbuild --bundle inlines every npm dependency into a single self-contained
+  # file) rather than relying on Netlify's own per-function dependency install,
+  # which was not picking up netlify/functions/package.json and left `hono`
+  # etc. as unresolved imports at runtime (ERR_MODULE_NOT_FOUND).
+  command = "yarn build && cd ../netlify/functions && npm install && npm run bundle"
   publish = "build"
-  functions = "../netlify/functions"
+  functions = "../netlify/functions-dist"
 
 [functions]
   node_bundler = "esbuild"
