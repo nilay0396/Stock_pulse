@@ -61,9 +61,17 @@ on conflict (symbol) do update set
   industry = excluded.industry,
   market_cap_tier = excluded.market_cap_tier;
 
--- Admin user seed. bcrypt hash below is a PLACEHOLDER — before running this
--- seed, replace it with: node -e "console.log(require('bcryptjs').hashSync(process.env.ADMIN_PASSWORD || 'Admin@12345', 10))"
+-- Admin user seed.
+--
+-- IMPORTANT: the value below is NOT your password — it must be a bcrypt HASH
+-- of it. Storing the plaintext password here would break login (bcrypt can't
+-- compare plaintext against plaintext as if it were a hash) and is a real
+-- security issue. Generate the hash first, in netlify/functions/:
+--   node -e "console.log(require('bcryptjs').hashSync('YOUR_PASSWORD_HERE', 10))"
+-- It will look like: $2a$10$abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN
+-- Paste THAT string below, not your password.
+--
 -- Only inserts if no admin exists yet (mirrors seed_admin()'s "seed once" behavior).
 insert into users (email, name, role, password_hash)
-select 'admin@marketpulse.in', 'Administrator', 'admin', '$2a$10$REPLACE_WITH_REAL_BCRYPT_HASH'
+select 'admin@marketpulse.in', 'Administrator', 'admin', '$2a$10$REPLACE_WITH_A_REAL_BCRYPT_HASH_NOT_YOUR_PASSWORD'
 where not exists (select 1 from users where role = 'admin');
