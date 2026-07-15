@@ -23,7 +23,15 @@ authRoutes.post("/register", async (c) => {
   const complexityErr = passwordComplexityError(password);
   if (complexityErr) return c.json({ detail: complexityErr }, 400);
 
-  const { data: existing } = await db.from("users").select("id").eq("email", email).maybeSingle();
+  const { data: existing, error: lookupError } = await db
+    .from("users")
+    .select("id")
+    .eq("email", email)
+    .maybeSingle();
+  if (lookupError) {
+    console.error("register: lookup failed", lookupError);
+    return c.json({ detail: "Registration failed", debug: lookupError.message }, 500);
+  }
   if (existing) return c.json({ detail: "Email already registered" }, 409);
 
   const name = (body.name || email.split("@")[0]).trim();
@@ -35,7 +43,10 @@ authRoutes.post("/register", async (c) => {
     .select("id, email, name, role, created_at")
     .single();
 
-  if (error || !user) return c.json({ detail: "Registration failed" }, 500);
+  if (error || !user) {
+    console.error("register: insert failed", error);
+    return c.json({ detail: "Registration failed", debug: error?.message }, 500);
+  }
 
   const token = createToken(user.id, user.role);
   return c.json({ access_token: token, token_type: "bearer", user: userToPublic(user) });
@@ -46,11 +57,16 @@ authRoutes.post("/login", async (c) => {
   const email = (body.email || "").trim().toLowerCase();
   const password = body.password || "";
 
-  const { data: user } = await db
+  const { data: user, error } = await db
     .from("users")
     .select("id, email, name, role, created_at, password_hash")
     .eq("email", email)
     .maybeSingle();
+
+  if (error) {
+    console.error("login: lookup failed", error);
+    return c.json({ detail: "Login failed", debug: error.message }, 500);
+  }
 
   if (!user || !(await verifyPassword(password, user.password_hash))) {
     return c.json({ detail: "Invalid credentials" }, 401);
