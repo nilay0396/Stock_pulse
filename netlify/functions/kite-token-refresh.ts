@@ -1,6 +1,5 @@
 /**
- * Refreshes the Kite Connect access token (TOTP auto-login) and the
- * NSE-equity + NFO-options instrument-master cache.
+ * Refreshes the Kite Connect access token (TOTP auto-login).
  *
  * NOT yet on a cron schedule (no `config.schedule` export) — per the
  * Phase 3a plan, this stays manually-triggerable until a live login has
@@ -11,70 +10,7 @@
  * real login against the user's live trading account — not something that
  * should be publicly invokable by anyone who finds the function URL.
  */
-import type { Connect } from "kiteconnect";
 import { refreshKiteToken } from "./lib/kite/auth.js";
-import { getAuthenticatedKiteClient } from "./lib/kite/client.js";
-import { db } from "./lib/db.js";
-
-function toDateOnly(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-async function refreshInstrumentCache(kc: Connect): Promise<{ nse: number; nfo: number }> {
-  const [nseInstruments, nfoInstruments] = await Promise.all([
-    kc.getInstruments("NSE"),
-    kc.getInstruments("NFO"),
-  ]);
-  const refreshedAt = new Date().toISOString();
-
-  const rows: Record<string, unknown>[] = [];
-
-  let nseCount = 0;
-  for (const inst of nseInstruments) {
-    if (inst.instrument_type !== "EQ") continue;
-    nseCount++;
-    rows.push({
-      instrument_token: Number(inst.instrument_token),
-      tradingsymbol: inst.tradingsymbol,
-      name: inst.name || null,
-      expiry: null,
-      strike: null,
-      instrument_type: "EQ",
-      segment: inst.segment,
-      exchange: inst.exchange,
-      refreshed_at: refreshedAt,
-    });
-  }
-
-  let nfoCount = 0;
-  for (const inst of nfoInstruments) {
-    if (inst.instrument_type !== "CE" && inst.instrument_type !== "PE") continue;
-    nfoCount++;
-    const expiryStr = inst.expiry ? toDateOnly(new Date(inst.expiry)) : null;
-    rows.push({
-      instrument_token: Number(inst.instrument_token),
-      tradingsymbol: inst.tradingsymbol,
-      name: inst.name || null,
-      expiry: expiryStr,
-      strike: inst.strike || null,
-      instrument_type: inst.instrument_type,
-      segment: inst.segment,
-      exchange: inst.exchange,
-      refreshed_at: refreshedAt,
-    });
-  }
-
-  const CHUNK_SIZE = 500;
-  for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
-    const chunk = rows.slice(i, i + CHUNK_SIZE);
-    const { error } = await db.from("kite_instruments").upsert(chunk, { onConflict: "instrument_token" });
-    if (error) {
-      throw new Error(`Instrument cache upsert failed at offset ${i}: ${error.message}`);
-    }
-  }
-
-  return { nse: nseCount, nfo: nfoCount };
-}
 
 export default async (req: Request): Promise<Response> => {
   const expectedSecret = process.env.KITE_REFRESH_SECRET;
@@ -100,31 +36,12 @@ export default async (req: Request): Promise<Response> => {
 
   try {
     console.log("kite-token-refresh: starting");
-    const mode = new URL(req.url).searchParams.get("mode");
-    const tokenResult = mode === "instruments" ? null : await refreshKiteToken();
-
-    if (mode !== "instruments") {
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          refreshed_at: tokenResult?.refreshedAt ?? null,
-          instruments: null,
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-
-    const kc = await getAuthenticatedKiteClient();
-    const instrumentCounts = await refreshInstrumentCache(kc);
-    console.log(
-      `kite-token-refresh: instrument cache refreshed (nse=${instrumentCounts.nse} nfo=${instrumentCounts.nfo})`,
-    );
+    const tokenResult = await refreshKiteToken();
 
     return new Response(
       JSON.stringify({
         ok: true,
-        refreshed_at: tokenResult?.refreshedAt ?? null,
-        instruments: instrumentCounts,
+        refreshed_at: tokenResult.refreshedAt,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
