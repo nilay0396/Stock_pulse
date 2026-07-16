@@ -175,9 +175,11 @@ function parseAuthorizeForm(html: string, baseUrl: string): ParsedForm | null {
 function summarizeHtmlPage(html: string): string {
   const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim() || "no-title";
   const hrefs = [...html.matchAll(/\b(?:href|src)\s*=\s*["']([^"']+)["']/gi)]
-    .slice(0, 5)
+    .map((m) => decodeHtmlAttr(m[1]))
+    .filter((ref) => /\.(?:js|css)(?:\?|$)/i.test(ref) || ref.includes("/static/"))
+    .slice(0, 12)
     .map((m) => {
-      const ref = decodeHtmlAttr(m[1]);
+      const ref = m;
       return ref.startsWith("/") ? ref.split("?")[0] : describeUrl(ref);
     });
   const text = html
