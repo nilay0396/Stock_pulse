@@ -163,6 +163,7 @@ async function getRequestToken(creds: KiteCreds): Promise<string> {
 
     const sessId = extractQueryParam(candidateUrl, "sess_id");
     if (sessId) {
+      console.log("kite-auth: connect session id obtained; authorizing app");
       const finishRes = await fetchWithCookies("https://kite.zerodha.com/connect/finish", {
         method: "POST",
         headers: { ...BROWSER_HEADERS, "Content-Type": "application/x-www-form-urlencoded" },
@@ -181,6 +182,7 @@ async function getRequestToken(creds: KiteCreds): Promise<string> {
       const finishText = await finishRes.text();
       requestToken = extractRequestToken(finishText);
       if (requestToken) break;
+      console.log(`kite-auth: connect finish did not yield token (status=${finishRes.status})`);
     }
 
     const text = await res.text();
