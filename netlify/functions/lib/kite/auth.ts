@@ -73,6 +73,16 @@ function generateTotpCode(totpSecretBase32: string): string {
   return totp.generate();
 }
 
+function extractRequestToken(value: string | null | undefined): string | null {
+  if (!value || !value.includes("request_token=")) return null;
+  try {
+    return new URL(value).searchParams.get("request_token");
+  } catch {
+    const match = value.match(/[?&]request_token=([^&#]+)/);
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+}
+
 /** Mirrors the reference script's window-alignment guard: if the current
  * 30s TOTP window is about to expire, wait for a fresh one before
  * generating/posting a code, to avoid a race against expiry. */
@@ -86,7 +96,7 @@ async function waitForFreshTotpWindow(): Promise<void> {
 async function getRequestToken(creds: KiteCreds): Promise<string> {
   const jar = new CookieJar();
   const fetchWithCookies = fetchCookie(fetch, jar);
-  const connectUrl = `https://kite.zerodha.com/connect/login?api_key=${encodeURIComponent(creds.apiKey)}&v=3`;
+  const connectUrl = `https://kite.trade/connect/login?api_key=${encodeURIComponent(creds.apiKey)}&v=3`;
 
   // Step 0: warm up the OAuth-flow cookies (which app/redirect_url this
   // session is authorizing).
@@ -138,10 +148,13 @@ async function getRequestToken(creds: KiteCreds): Promise<string> {
     const res = await fetchWithCookies(url, { headers: BROWSER_HEADERS, redirect: "manual" });
     const location = res.headers.get("location");
     const candidateUrl = location ? new URL(location, url).toString() : res.url;
-    if (candidateUrl.includes("request_token=")) {
-      requestToken = new URL(candidateUrl).searchParams.get("request_token");
-      break;
-    }
+    requestToken = extractRequestToken(candidateUrl);
+    if (requestToken) break;
+
+    const text = await res.text();
+    requestToken = extractRequestToken(text);
+    if (requestToken) break;
+
     if (!location) break;
     url = candidateUrl;
   }
