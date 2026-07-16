@@ -176,7 +176,10 @@ function summarizeHtmlPage(html: string): string {
   const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim() || "no-title";
   const hrefs = [...html.matchAll(/\b(?:href|src)\s*=\s*["']([^"']+)["']/gi)]
     .slice(0, 5)
-    .map((m) => describeUrl(decodeHtmlAttr(m[1])));
+    .map((m) => {
+      const ref = decodeHtmlAttr(m[1]);
+      return ref.startsWith("/") ? ref.split("?")[0] : describeUrl(ref);
+    });
   const text = html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
