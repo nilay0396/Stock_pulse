@@ -16,14 +16,39 @@ export interface UniverseRow {
   market_cap_tier: string;
 }
 
+async function selectAll<T>(table: string, columns: string, pageSize = 1000): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const to = from + pageSize - 1;
+    const { data, error } = await db.from(table).select(columns).range(from, to);
+    if (error) throw new Error(`Failed to load ${table}: ${error.message}`);
+    const rows = (data || []) as T[];
+    out.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+  return out;
+}
+
+function isScreenableNseEquity(symbol: string, name: string | null | undefined): boolean {
+  if (!symbol) return false;
+
+  // Keep ordinary listed equities. Exclude ETFs, REITs/InvITs, debt/gilt
+  // products, rights/temporary series and SME/surveillance suffixes that
+  // Yahoo often cannot resolve as .NS equities.
+  const upperName = (name || "").toUpperCase();
+  const blockedNameTokens = [" ETF", "ETF ", "BEES", "LIQUID", "GILT", "SDL", "TBILL", "TREASURY", "INVIT", "REIT"];
+  if (blockedNameTokens.some((token) => upperName.includes(token))) return false;
+
+  const blockedSuffixes = ["-BE", "-BZ", "-SM", "-ST", "-RR", "-IV", "-GB", "-GS", "-SG"];
+  if (blockedSuffixes.some((suffix) => symbol.endsWith(suffix))) return false;
+
+  return true;
+}
+
 /** Load the current universe (id-free rows the pipeline consumes). */
 export async function loadUniverse(limit = 5000): Promise<UniverseRow[]> {
-  const { data, error } = await db
-    .from("stock_universe")
-    .select("symbol, yf_symbol, name, sector, industry, market_cap_tier")
-    .limit(limit);
-  if (error) throw new Error(`Failed to load universe: ${error.message}`);
-  return (data || []) as UniverseRow[];
+  const rows = await selectAll<UniverseRow>("stock_universe", "symbol, yf_symbol, name, sector, industry, market_cap_tier");
+  return rows.slice(0, limit);
 }
 
 /**
@@ -34,18 +59,25 @@ export async function loadUniverse(limit = 5000): Promise<UniverseRow[]> {
  * on whatever is already seeded (the curated 51).
  */
 export async function expandUniverseFromKite(): Promise<{ inserted: number; total: number }> {
-  const { data: instruments, error } = await db
-    .from("kite_instruments")
-    .select("tradingsymbol, name")
-    .eq("exchange", "NSE")
-    .eq("instrument_type", "EQ");
-  if (error) throw new Error(`Failed to read kite_instruments: ${error.message}`);
+  const allInstruments = await selectAll<{
+    tradingsymbol: string;
+    name: string | null;
+    exchange: string | null;
+    instrument_type: string | null;
+  }>(
+    "kite_instruments",
+    "tradingsymbol, name, exchange, instrument_type",
+  );
+  const instruments = allInstruments.filter((inst) => {
+    const symbol = (inst.tradingsymbol || "").toUpperCase();
+    return inst.exchange === "NSE" && inst.instrument_type === "EQ" && isScreenableNseEquity(symbol, inst.name);
+  });
 
-  const { data: existing } = await db.from("stock_universe").select("symbol");
+  const existing = await selectAll<{ symbol: string }>("stock_universe", "symbol");
   const known = new Set((existing || []).map((r) => r.symbol));
 
   const toInsert: UniverseRow[] = [];
-  for (const inst of instruments || []) {
+  for (const inst of instruments) {
     const symbol = (inst.tradingsymbol || "").toUpperCase();
     if (!symbol || known.has(symbol)) continue;
     known.add(symbol);
