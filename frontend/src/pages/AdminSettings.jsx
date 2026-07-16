@@ -15,14 +15,22 @@ export default function AdminSettings() {
   const [botInfo, setBotInfo] = useState(null);
   const [universeStats, setUniverseStats] = useState(null);
   const [reseedingUniverse, setReseedingUniverse] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   const load = async () => {
-    const [a, sc, u] = await Promise.all([
-      api.get("/admin/settings"),
-      api.get("/admin/scheduler"),
-      api.get("/stocks/universe/stats").catch(() => ({ data: { total: 0, curated: 0, other: 0 } })),
-    ]);
-    setS(a.data); setSched(sc.data); setUniverseStats(u.data);
+    setLoadError("");
+    try {
+      const [a, sc, u] = await Promise.all([
+        api.get("/admin/settings"),
+        api.get("/admin/scheduler"),
+        api.get("/stocks/universe/stats").catch(() => ({ data: { total: 0, curated: 0, other: 0 } })),
+      ]);
+      setS(a.data); setSched(sc.data); setUniverseStats(u.data);
+    } catch (e) {
+      const detail = e?.response?.data?.detail || e?.message || "Failed to load settings";
+      setLoadError(detail);
+      toast.error(detail);
+    }
   };
   useEffect(() => { load(); }, []);
 
@@ -85,6 +93,17 @@ export default function AdminSettings() {
     navigator.clipboard.writeText(String(id));
     toast.success(`Chat ID ${id} copied`);
   };
+
+  if (!s && loadError) return (
+    <div className="p-8 flex flex-col gap-3">
+      <div className="font-mono text-[12px]" style={{ color: "var(--text-muted)" }}>Settings could not load.</div>
+      <div className="panel p-4 max-w-2xl">
+        <div className="overline">Admin API Error</div>
+        <div className="font-body text-[13px] mt-2" style={{ color: "var(--bearish)" }}>{loadError}</div>
+        <button className="btn btn-outline mt-4" onClick={load}>Retry</button>
+      </div>
+    </div>
+  );
 
   const bindAsDefault = async (id) => {
     const next = { ...s, telegram_default_chat_id: String(id) };
