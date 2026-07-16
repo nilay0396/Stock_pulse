@@ -100,7 +100,8 @@ export default async (req: Request): Promise<Response> => {
 
   try {
     console.log("kite-token-refresh: starting");
-    const tokenResult = await refreshKiteToken();
+    const mode = new URL(req.url).searchParams.get("mode");
+    const tokenResult = mode === "instruments" ? null : await refreshKiteToken();
 
     const kc = await getAuthenticatedKiteClient();
     const instrumentCounts = await refreshInstrumentCache(kc);
@@ -111,7 +112,7 @@ export default async (req: Request): Promise<Response> => {
     return new Response(
       JSON.stringify({
         ok: true,
-        refreshed_at: tokenResult.refreshedAt,
+        refreshed_at: tokenResult?.refreshedAt ?? null,
         instruments: instrumentCounts,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
