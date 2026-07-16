@@ -34,6 +34,9 @@ async function main(): Promise<void> {
 
   const result = await generateReport({ skipLlm, force, universeLimit, triggeredBy: "github-actions" });
   console.log("pipeline result:", JSON.stringify(result));
+  if (result.funnel) {
+    console.log("pipeline funnel:", JSON.stringify(result.funnel));
+  }
 
   if (result.status === "failed") process.exit(1);
   process.exit(0);

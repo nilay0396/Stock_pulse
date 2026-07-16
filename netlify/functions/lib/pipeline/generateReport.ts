@@ -359,7 +359,7 @@ function selectIdeas(
   }
 
   const fallback = scores
-    .filter((s) => s._passes_filters && s.direction !== "avoid")
+    .filter((s) => s._last_close !== null && s._last_close !== undefined)
     .sort((a, b) => {
       const aScore = (a.conviction ?? 0) + 0.25 * (a.technical ?? 0);
       const bScore = (b.conviction ?? 0) + 0.25 * (b.technical ?? 0);
@@ -372,6 +372,7 @@ function selectIdeas(
         "Watchlist candidate: strict weekly/monthly thresholds produced no trade ideas",
         ...idea.reasons,
       ].slice(0, 6);
+      idea.risks = [...(s._passes_filters ? [] : ["Did not pass all hard trade filters"]), ...idea.risks].slice(0, 4);
       return idea;
     });
 
@@ -592,6 +593,12 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
       weekly_ideas: weekly.length,
       monthly_ideas: monthly.length,
       relaxed_ideas: relaxed,
+      no_idea_reason:
+        weekly.length || monthly.length
+          ? null
+          : scores.length === 0
+            ? "No stocks reached Stage 3 scoring. Check universe, OHLC, snapshot and shortlist counts."
+            : "Stocks were scored, but neither strict nor fallback idea selection produced candidates.",
       excluded_by_earnings: excluded.length,
       kite_gate: Boolean(survivors),
       total_seconds: round((Date.now() - tStart) / 1000, 1),
