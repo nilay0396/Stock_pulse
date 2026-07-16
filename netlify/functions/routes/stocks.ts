@@ -1,9 +1,96 @@
 import { Hono } from "hono";
 import { db } from "../lib/db.js";
 import { requireUser, type PublicUser } from "../lib/auth.js";
+import { fetchEquityOhlcDated, fetchQuoteSummaryInfo } from "../lib/market/yahoo.js";
+import { computeSnapshot } from "../lib/scoring/indicators.js";
+import { entryStopTarget } from "../lib/scoring/scoring.js";
+import { getAuthenticatedKiteClient } from "../lib/kite/client.js";
+import { fetchOptionChain } from "../lib/kite/optionChain.js";
 
 type Variables = { user: PublicUser };
 export const stocksRoutes = new Hono<{ Variables: Variables }>();
+
+type Dict = Record<string, any>;
+
+function verdictFor(score: Dict | null, horizon: "weekly" | "monthly"): "buy" | "hold" | "sell" | "avoid" {
+  if (!score) return "hold";
+  if (score.direction === "avoid") return "avoid";
+  if (score.direction === "bearish") return score.conviction >= 70 ? "sell" : "hold";
+  const gate = horizon === "weekly" ? 72 : 75;
+  return score.conviction >= gate ? "buy" : "hold";
+}
+
+function buildPlan(snapshot: Dict, score: Dict | null, horizon: "weekly" | "monthly"): Dict {
+  const direction = score?.direction || "watch";
+  const last = snapshot.last_close || 0;
+  if (!last) return { verdict: "avoid", horizon_days: horizon === "weekly" ? 10 : 35, plan: {} };
+  const levels = entryStopTarget(last, snapshot.atr_14 ?? null, direction, horizon);
+  return {
+    verdict: verdictFor(score, horizon),
+    horizon_days: horizon === "weekly" ? 10 : 35,
+    plan: {
+      entry_low: levels.entry_low,
+      entry_high: levels.entry_high,
+      stop_loss: levels.stop_loss,
+      target_1: levels.target_low,
+      target_2: levels.target_high,
+      rr: levels.risk_reward,
+    },
+  };
+}
+
+function mapNews(row: Dict): Dict {
+  return {
+    title: row.headline,
+    link: row.url,
+    source: row.source,
+    publisher: row.source,
+    published: row.published_at,
+    published_at: row.published_at,
+    ingested_at: row.ingested_at,
+    sentiment: row.sentiment,
+    category: row.category,
+  };
+}
+
+function analyseOptionChain(chain: Dict): Dict {
+  const calls = Array.isArray(chain.calls) ? chain.calls : [];
+  const puts = Array.isArray(chain.puts) ? chain.puts : [];
+  const totalCallOi = calls.reduce((s: number, c: Dict) => s + Number(c.oi || 0), 0);
+  const totalPutOi = puts.reduce((s: number, p: Dict) => s + Number(p.oi || 0), 0);
+  const byOi = (a: Dict, b: Dict) => Number(b.oi || 0) - Number(a.oi || 0);
+  const maxCall = [...calls].sort(byOi)[0] || {};
+  const maxPut = [...puts].sort(byOi)[0] || {};
+  const pcr = totalCallOi ? totalPutOi / totalCallOi : null;
+  return {
+    total_call_oi: totalCallOi,
+    total_put_oi: totalPutOi,
+    pcr,
+    atm_strike: chain.underlying
+      ? [...calls, ...puts].map((c: Dict) => c.strike).sort((a: number, b: number) => Math.abs(a - chain.underlying) - Math.abs(b - chain.underlying))[0]
+      : null,
+    max_oi_call_strike: maxCall.strike ?? null,
+    max_oi_put_strike: maxPut.strike ?? null,
+    nearest_expiry: chain.expiries?.[0] ?? null,
+    top_calls: [...calls].sort(byOi).slice(0, 8),
+    top_puts: [...puts].sort(byOi).slice(0, 8),
+    bias: pcr == null ? "neutral" : pcr > 1.15 ? "bullish" : pcr < 0.85 ? "bearish" : "neutral",
+    confidence: pcr == null ? 0 : Math.min(1, Math.abs(pcr - 1)),
+  };
+}
+
+function fallbackAiSummary(universe: Dict, snapshot: Dict, score: Dict | null, news: Dict[]): string {
+  const lines = [
+    `${universe.symbol} is in ${universe.sector || "Other"} with latest close around ₹${snapshot.last_close ?? "—"}.`,
+    score
+      ? `Latest pipeline conviction is ${Number(score.conviction || 0).toFixed(1)}/100 with ${score.direction || "neutral"} direction.`
+      : "This symbol has no latest pipeline score yet, so treat the view as technical/data-only until the next report run.",
+  ];
+  if (score?.reasons?.length) lines.push(`Main supports: ${score.reasons.slice(0, 3).join("; ")}.`);
+  if (score?.risks?.length) lines.push(`Key risks: ${score.risks.slice(0, 3).join("; ")}.`);
+  if (news.length) lines.push(`Recent headlines loaded: ${news.length}.`);
+  return lines.join("\n");
+}
 
 // GET /stocks/universe?limit=5000
 stocksRoutes.get("/universe", requireUser, async (c) => {
@@ -31,4 +118,158 @@ stocksRoutes.get("/universe/stats", requireUser, async (c) => {
     return c.json({ detail: "Failed to load universe stats" }, 500);
   }
   return c.json({ total: total.count ?? 0, curated: curated.count ?? 0, other: other.count ?? 0 });
+});
+
+// GET /stocks/search?q=rel&limit=10
+stocksRoutes.get("/search", requireUser, async (c) => {
+  const q = (c.req.query("q") || "").trim();
+  const limit = Math.min(25, Math.max(1, Number(c.req.query("limit") || "10")));
+  if (!q) return c.json([]);
+  const needle = q.replace(/[%_]/g, "");
+  const { data, error } = await db
+    .from("stock_universe")
+    .select("symbol,yf_symbol,name,sector,industry,market_cap_tier")
+    .or(`symbol.ilike.%${needle}%,name.ilike.%${needle}%`)
+    .order("symbol", { ascending: true })
+    .limit(limit);
+  if (error) return c.json({ detail: "Failed to search stocks" }, 500);
+  return c.json(data || []);
+});
+
+async function latestScore(symbol: string): Promise<Dict | null> {
+  const { data } = await db
+    .from("stock_scores")
+    .select("*")
+    .eq("symbol", symbol)
+    .order("as_of", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data || null;
+}
+
+async function latestSnapshot(symbol: string): Promise<Dict | null> {
+  const { data } = await db
+    .from("technical_snapshots")
+    .select("*")
+    .eq("symbol", symbol)
+    .maybeSingle();
+  return data || null;
+}
+
+async function stockNews(symbol: string, limit = 20): Promise<Dict[]> {
+  const { data } = await db
+    .from("news_items")
+    .select("*")
+    .eq("symbol", symbol)
+    .order("ingested_at", { ascending: false })
+    .limit(limit);
+  return (data || []).map(mapNews);
+}
+
+async function stockEvents(symbol: string): Promise<Dict> {
+  const [ann, actions] = await Promise.all([
+    db.from("corp_announcements").select("*").eq("symbol", symbol).order("ingested_at", { ascending: false }).limit(10),
+    db.from("corp_actions").select("*").eq("symbol", symbol).order("ingested_at", { ascending: false }).limit(10),
+  ]);
+  return {
+    next_earnings: null,
+    announcements: ann.data || [],
+    actions: actions.data || [],
+  };
+}
+
+async function stockFno(symbol: string): Promise<Dict> {
+  const providersTried: Dict[] = [];
+  try {
+    const kc = await getAuthenticatedKiteClient();
+    const chain = await fetchOptionChain(kc, symbol);
+    if (!chain.eligible) {
+      providersTried.push({ provider: "kite", error: chain.error || "not eligible" });
+      return { eligible: false, source: "none", providers_tried: providersTried };
+    }
+    return {
+      eligible: true,
+      source: "kite",
+      fetched_at: chain.fetched_at,
+      underlying: chain.underlying,
+      analytics: analyseOptionChain(chain),
+    };
+  } catch (err) {
+    providersTried.push({ provider: "kite", error: err instanceof Error ? err.message : String(err) });
+    return { eligible: false, source: "none", providers_tried: providersTried };
+  }
+}
+
+// POST /stocks/:symbol/deep-dive
+stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
+  const symbol = (c.req.param("symbol") || "").toUpperCase();
+  const { data: universe, error: universeError } = await db
+    .from("stock_universe")
+    .select("*")
+    .eq("symbol", symbol)
+    .maybeSingle();
+  if (universeError) return c.json({ detail: "Failed to load stock" }, 500);
+  if (!universe) return c.json({ detail: "Stock not found" }, 404);
+
+  const [ohlc, fundamentalsMap, storedSnapshot, score, news, events, fno] = await Promise.all([
+    fetchEquityOhlcDated(symbol).catch(() => []),
+    fetchQuoteSummaryInfo([symbol]).catch(() => ({} as Record<string, Record<string, any>>)),
+    latestSnapshot(symbol),
+    latestScore(symbol),
+    stockNews(symbol),
+    stockEvents(symbol),
+    stockFno(symbol),
+  ]);
+
+  const computedSnapshot = ohlc.length ? computeSnapshot(ohlc.map((b) => ({
+    close: b.close,
+    high: b.high,
+    low: b.low,
+    volume: b.volume,
+  }))) : {};
+  const technicals = { ...(storedSnapshot || {}), ...computedSnapshot };
+  const fundamentals = (fundamentalsMap as Record<string, Record<string, any>>)[symbol] || {};
+  const aiSummary = fallbackAiSummary(universe, technicals, score, news);
+
+  return c.json({
+    symbol,
+    name: universe.name,
+    sector: universe.sector,
+    industry: universe.industry,
+    market_cap_tier: universe.market_cap_tier,
+    ohlc,
+    technicals,
+    fundamentals,
+    score,
+    weekly: buildPlan(technicals, score, "weekly"),
+    monthly: buildPlan(technicals, score, "monthly"),
+    news,
+    sentiment: { avg_sentiment: 0, items: news.map((n) => ({ title: n.title, sentiment: n.sentiment ?? 0, category: n.category || "other" })) },
+    events,
+    fno,
+    ai_summary: aiSummary,
+    from_cache: false,
+  });
+});
+
+// GET /stocks/:symbol
+stocksRoutes.get("/:symbol", requireUser, async (c) => {
+  const symbol = (c.req.param("symbol") || "").toUpperCase();
+  const [{ data: universe }, technicals, score, news] = await Promise.all([
+    db.from("stock_universe").select("*").eq("symbol", symbol).maybeSingle(),
+    latestSnapshot(symbol),
+    latestScore(symbol),
+    stockNews(symbol, 10),
+  ]);
+  if (!universe) return c.json({ universe: null });
+  return c.json({ universe, technicals, score, news });
+});
+
+// GET /stocks/:symbol/history?period=6mo
+stocksRoutes.get("/:symbol/history", requireUser, async (c) => {
+  const symbol = (c.req.param("symbol") || "").toUpperCase();
+  const period = c.req.query("period") || "6mo";
+  const days = period === "1mo" ? 45 : period === "3mo" ? 110 : period === "1y" ? 370 : 190;
+  const candles = await fetchEquityOhlcDated(symbol, days).catch(() => []);
+  return c.json({ symbol, candles });
 });

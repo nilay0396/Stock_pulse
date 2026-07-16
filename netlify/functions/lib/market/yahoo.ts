@@ -209,3 +209,25 @@ export async function fetchEquityOhlc(
   });
   return out;
 }
+
+export interface DatedOhlcvBar extends OhlcvBar {
+  date: string;
+  open: number | null;
+}
+
+export async function fetchEquityOhlcDated(nseSymbol: string, days = 370): Promise<DatedOhlcvBar[]> {
+  const quotes = await chartCloses(nseYahooSymbol(nseSymbol), isoDaysAgo(days));
+  const bars: DatedOhlcvBar[] = [];
+  for (const q of quotes) {
+    if (q.close === null || q.high === null || q.low === null) continue;
+    bars.push({
+      date: q.date.toISOString().slice(0, 10),
+      open: q.open ?? null,
+      close: q.close,
+      high: q.high,
+      low: q.low,
+      volume: q.volume ?? undefined,
+    });
+  }
+  return bars;
+}
