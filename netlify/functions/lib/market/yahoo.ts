@@ -9,7 +9,7 @@
 import YahooFinance from "yahoo-finance2";
 import type { OhlcvBar } from "../scoring/indicators.js";
 
-const yf = new YahooFinance();
+const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 
 // Port of MacroConnector.TICKER_MAP (friendly key -> Yahoo symbol).
 export const MACRO_TICKER_MAP: Record<string, string> = {

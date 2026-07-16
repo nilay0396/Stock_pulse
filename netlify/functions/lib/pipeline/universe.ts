@@ -31,15 +31,30 @@ async function selectAll<T>(table: string, columns: string, pageSize = 1000): Pr
 
 function isScreenableNseEquity(symbol: string, name: string | null | undefined): boolean {
   if (!symbol) return false;
+  if (/^\d/.test(symbol)) return false;
 
   // Keep ordinary listed equities. Exclude ETFs, REITs/InvITs, debt/gilt
   // products, rights/temporary series and SME/surveillance suffixes that
   // Yahoo often cannot resolve as .NS equities.
   const upperName = (name || "").toUpperCase();
-  const blockedNameTokens = [" ETF", "ETF ", "BEES", "LIQUID", "GILT", "SDL", "TBILL", "TREASURY", "INVIT", "REIT"];
+  const blockedNameTokens = [
+    " ETF",
+    "ETF ",
+    "BEES",
+    "LIQUID",
+    "GILT",
+    "SDL",
+    "TBILL",
+    "TREASURY",
+    "INVIT",
+    "REIT",
+    "BOND",
+    "NCD",
+    "DEBENTURE",
+  ];
   if (blockedNameTokens.some((token) => upperName.includes(token))) return false;
 
-  const blockedSuffixes = ["-BE", "-BZ", "-SM", "-ST", "-RR", "-IV", "-GB", "-GS", "-SG"];
+  const blockedSuffixes = ["-BE", "-BZ", "-SM", "-ST", "-RR", "-IV", "-GB", "-GS", "-SG", "-N0", "-N1", "-N2", "-N3"];
   if (blockedSuffixes.some((suffix) => symbol.endsWith(suffix))) return false;
 
   return true;
