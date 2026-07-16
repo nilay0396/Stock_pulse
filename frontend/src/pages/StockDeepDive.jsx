@@ -570,7 +570,14 @@ export default function StockDeepDive() {
           <TabHeader tab={tab} setTab={setTab} />
           <div className="pt-2">
             {tab === "overview" && <OverviewTab d={data} />}
-            {tab === "chart" && <PriceChart ohlc={data.ohlc} />}
+            {tab === "chart" && (
+              <div className="flex flex-col gap-2">
+                <div className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
+                  Chart source: {(data.chart_source || "unknown").toUpperCase()}
+                </div>
+                <PriceChart ohlc={data.ohlc} />
+              </div>
+            )}
             {tab === "technicals" && <TechnicalsTab d={data} />}
             {tab === "fno" && <FnoTab d={data} />}
             {tab === "news" && <NewsTab d={data} />}

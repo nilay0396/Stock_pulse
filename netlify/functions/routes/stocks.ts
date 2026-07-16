@@ -6,6 +6,7 @@ import { computeSnapshot } from "../lib/scoring/indicators.js";
 import { entryStopTarget } from "../lib/scoring/scoring.js";
 import { getAuthenticatedKiteClient } from "../lib/kite/client.js";
 import { fetchOptionChain } from "../lib/kite/optionChain.js";
+import { fetchHistoricalBarsDated } from "../lib/kite/historical.js";
 
 type Variables = { user: PublicUser };
 export const stocksRoutes = new Hono<{ Variables: Variables }>();
@@ -200,6 +201,20 @@ async function stockFno(symbol: string): Promise<Dict> {
   }
 }
 
+async function stockOhlc(symbol: string, days = 370): Promise<{ candles: Dict[]; source: "kite" | "yahoo" | "none" }> {
+  try {
+    const kc = await getAuthenticatedKiteClient();
+    const kiteCandles = await fetchHistoricalBarsDated(kc, symbol, days, "day");
+    if (kiteCandles && kiteCandles.length) return { candles: kiteCandles, source: "kite" };
+  } catch {
+    // Fall through to Yahoo; Deep Dive should remain usable if Kite auth expires.
+  }
+
+  const yahooCandles = await fetchEquityOhlcDated(symbol, days).catch(() => []);
+  if (yahooCandles.length) return { candles: yahooCandles, source: "yahoo" };
+  return { candles: [], source: "none" };
+}
+
 // POST /stocks/:symbol/deep-dive
 stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
   const symbol = (c.req.param("symbol") || "").toUpperCase();
@@ -211,8 +226,8 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
   if (universeError) return c.json({ detail: "Failed to load stock" }, 500);
   if (!universe) return c.json({ detail: "Stock not found" }, 404);
 
-  const [ohlc, fundamentalsMap, storedSnapshot, score, news, events, fno] = await Promise.all([
-    fetchEquityOhlcDated(symbol).catch(() => []),
+  const [ohlcResult, fundamentalsMap, storedSnapshot, score, news, events, fno] = await Promise.all([
+    stockOhlc(symbol),
     fetchQuoteSummaryInfo([symbol]).catch(() => ({} as Record<string, Record<string, any>>)),
     latestSnapshot(symbol),
     latestScore(symbol),
@@ -221,6 +236,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
     stockFno(symbol),
   ]);
 
+  const ohlc = ohlcResult.candles;
   const computedSnapshot = ohlc.length ? computeSnapshot(ohlc.map((b) => ({
     close: b.close,
     high: b.high,
@@ -238,6 +254,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
     industry: universe.industry,
     market_cap_tier: universe.market_cap_tier,
     ohlc,
+    chart_source: ohlcResult.source,
     technicals,
     fundamentals,
     score,
@@ -270,6 +287,6 @@ stocksRoutes.get("/:symbol/history", requireUser, async (c) => {
   const symbol = (c.req.param("symbol") || "").toUpperCase();
   const period = c.req.query("period") || "6mo";
   const days = period === "1mo" ? 45 : period === "3mo" ? 110 : period === "1y" ? 370 : 190;
-  const candles = await fetchEquityOhlcDated(symbol, days).catch(() => []);
-  return c.json({ symbol, candles });
+  const { candles, source } = await stockOhlc(symbol, days);
+  return c.json({ symbol, candles, source });
 });

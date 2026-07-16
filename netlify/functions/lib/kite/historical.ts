@@ -1,6 +1,7 @@
 import type { Connect } from "kiteconnect";
 import { db } from "../db.js";
 import type { OhlcvBar } from "../scoring/indicators.js";
+import type { DatedOhlcvBar } from "../market/yahoo.js";
 
 /** Kite's Historical Candle API is one instrument per call (no batch
  * download like yfinance) — this is only meant for the Stage-2 shortlist
@@ -50,6 +51,37 @@ export async function fetchHistoricalBars(
     const candles = await kc.getHistoricalData(instrumentToken, "day", toDateOnly(from), toDateOnly(to));
 
     return candles.map((c) => ({
+      close: c.close,
+      high: c.high,
+      low: c.low,
+      volume: c.volume,
+    }));
+  } catch (err) {
+    console.warn(`kite-historical: failed for ${tradingsymbol}:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+export async function fetchHistoricalBarsDated(
+  kc: Connect,
+  tradingsymbol: string,
+  lookbackDays = 370,
+  interval: "day" | "minute" | "3minute" | "5minute" | "10minute" | "15minute" | "30minute" | "60minute" = "day",
+): Promise<DatedOhlcvBar[] | null> {
+  try {
+    const instrumentToken = await lookupInstrumentToken(tradingsymbol);
+    if (instrumentToken === null) {
+      console.warn(`kite-historical: no instrument_token cached for ${tradingsymbol}`);
+      return null;
+    }
+
+    const to = new Date();
+    const from = new Date(to.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
+    const candles = await kc.getHistoricalData(instrumentToken, interval, toDateOnly(from), toDateOnly(to));
+
+    return candles.map((c) => ({
+      date: c.date instanceof Date ? c.date.toISOString().slice(0, 10) : String(c.date).slice(0, 10),
+      open: c.open,
       close: c.close,
       high: c.high,
       low: c.low,
