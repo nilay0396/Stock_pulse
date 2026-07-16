@@ -80,7 +80,9 @@ export async function fetchHistoricalBarsDated(
     const candles = await kc.getHistoricalData(instrumentToken, interval, toDateOnly(from), toDateOnly(to));
 
     return candles.map((c) => ({
-      date: c.date instanceof Date ? c.date.toISOString().slice(0, 10) : String(c.date).slice(0, 10),
+      date: c.date instanceof Date
+        ? (interval === "day" ? c.date.toISOString().slice(0, 10) : c.date.toISOString())
+        : String(c.date),
       open: c.open,
       close: c.close,
       high: c.high,

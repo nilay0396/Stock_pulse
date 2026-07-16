@@ -98,29 +98,46 @@ function SearchBar({ onPick }) {
   );
 }
 
-// ---------- mini sparkline-style line chart from OHLC closes ----------
+// ---------- candlestick chart from OHLC candles ----------
 function PriceChart({ ohlc }) {
   if (!ohlc || ohlc.length < 5) return <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>Not enough price history.</div>;
-  const closes = ohlc.map((b) => b.close).filter((c) => c != null && c > 0);
-  if (closes.length < 2) return null;
-  const min = Math.min(...closes), max = Math.max(...closes);
+  const candles = ohlc.filter((b) => b.close != null && b.high != null && b.low != null);
+  if (candles.length < 2) return null;
+  const prices = candles.flatMap((b) => [b.high, b.low, b.open ?? b.close, b.close]).filter((v) => v != null && v > 0);
+  const min = Math.min(...prices), max = Math.max(...prices);
   const range = max - min || 1;
-  const w = 720, h = 180;
-  const stepX = w / (closes.length - 1);
-  const path = closes.map((c, i) => `${i === 0 ? "M" : "L"} ${(i * stepX).toFixed(1)} ${(h - ((c - min) / range) * h).toFixed(1)}`).join(" ");
-  const last = closes[closes.length - 1];
-  const first = closes[0];
+  const w = 900, h = 240;
+  const pad = 8;
+  const stepX = w / candles.length;
+  const bodyW = Math.max(1.2, Math.min(8, stepX * 0.58));
+  const y = (p) => pad + (h - pad * 2) - ((p - min) / range) * (h - pad * 2);
+  const last = candles[candles.length - 1].close;
+  const first = candles[0].close;
   const up = last >= first;
   return (
-    <svg viewBox={`0 0 ${w} ${h + 22}`} preserveAspectRatio="none" style={{ width: "100%", height: 200 }} data-testid="deepdive-chart">
-      <defs>
-        <linearGradient id="ddFill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor={up ? "#4ade80" : "#f87171"} stopOpacity="0.25" />
-          <stop offset="100%" stopColor={up ? "#4ade80" : "#f87171"} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={`${path} L ${w} ${h} L 0 ${h} Z`} fill="url(#ddFill)" />
-      <path d={path} fill="none" stroke={up ? "#4ade80" : "#f87171"} strokeWidth="1.5" />
+    <svg viewBox={`0 0 ${w} ${h + 24}`} preserveAspectRatio="none" style={{ width: "100%", height: 280 }} data-testid="deepdive-chart">
+      {[0.25, 0.5, 0.75].map((g) => (
+        <line key={g} x1="0" x2={w} y1={pad + g * (h - pad * 2)} y2={pad + g * (h - pad * 2)}
+              stroke="var(--border)" strokeDasharray="2 6" strokeWidth="1" />
+      ))}
+      {candles.map((c, i) => {
+        const x = i * stepX + stepX / 2;
+        const open = c.open ?? c.close;
+        const green = c.close >= open;
+        const color = green ? "#4ade80" : "#f87171";
+        const yOpen = y(open);
+        const yClose = y(c.close);
+        const top = Math.min(yOpen, yClose);
+        const height = Math.max(1, Math.abs(yOpen - yClose));
+        return (
+          <g key={`${c.date}-${i}`}>
+            <line x1={x} x2={x} y1={y(c.high)} y2={y(c.low)} stroke={color} strokeWidth="1" />
+            <rect x={x - bodyW / 2} y={top} width={bodyW} height={height}
+                  fill={green ? "rgba(74,222,128,0.7)" : "rgba(248,113,113,0.75)"}
+                  stroke={color} strokeWidth="0.6" />
+          </g>
+        );
+      })}
       <text x="6" y={h + 16} fontSize="10" fontFamily="monospace" fill="var(--text-muted)">
         {ohlc[0].date} → {ohlc[ohlc.length - 1].date} · {fmt(min)} – {fmt(max)}
       </text>
@@ -271,6 +288,8 @@ function FundamentalsTab({ d }) {
 function FnoTab({ d }) {
   const f = d.fno || {};
   const a = f.analytics || {};
+  const kiteReason = (f.providers_tried || []).find((p) => p.provider === "kite")?.error || "";
+  const notEligible = kiteReason.toLowerCase().includes("not f&o eligible");
   const sourceLabel = {
     upstox: "Upstox (broker)", fyers: "Fyers (broker)", nse: "NSE direct",
     yfinance: "yfinance", none: "unavailable",
@@ -281,6 +300,11 @@ function FnoTab({ d }) {
     return (
       <div className="flex flex-col gap-3" data-testid="tab-content-fno">
         <div className="panel-elevated p-4 text-[12px]" style={{ color: "var(--text-muted)" }}>
+          {notEligible && (
+            <div className="mb-3 text-[13px]" style={{ color: "var(--text-primary)" }}>
+              This symbol is not F&amp;O eligible on NSE. Try RELIANCE, SBIN, HDFCBANK, ICICIBANK, INFY, or an index underlying.
+            </div>
+          )}
           <div className="text-[13px] mb-1" style={{ color: "var(--text-primary)" }}>
             F&amp;O data unavailable from free sources.
           </div>
@@ -479,15 +503,16 @@ export default function StockDeepDive() {
   const [error, setError] = useState(null);
   const [tab, setTab] = useState("overview");
   const [withAI, setWithAI] = useState(true);
+  const [chartInterval, setChartInterval] = useState("1d");
 
   const runFetch = async (sym, opts = {}) => {
     if (!sym) return;
     setLoading(true); setError(null);
     try {
       const { data } = await api.post(`/stocks/${sym}/deep-dive`,
-        { skip_llm: !withAI, force_refresh: !!opts.force });
+        { skip_llm: !withAI, force_refresh: !!opts.force, interval: opts.interval || chartInterval });
       setData(data);
-      setTab("overview");
+      if (!opts.keepTab) setTab("overview");
     } catch (e) {
       setError(e?.response?.data?.detail || "Fetch failed");
       toast.error(e?.response?.data?.detail || "Deep dive failed");
@@ -500,6 +525,10 @@ export default function StockDeepDive() {
   }, [pick]);
 
   const onPick = (r) => setPick(r);
+  const changeInterval = (interval) => {
+    setChartInterval(interval);
+    if (data?.symbol) runFetch(data.symbol, { force: true, interval, keepTab: true });
+  };
 
   return (
     <div className="px-6 py-6 flex flex-col gap-5" data-testid="stock-deep-dive-page">
@@ -572,8 +601,27 @@ export default function StockDeepDive() {
             {tab === "overview" && <OverviewTab d={data} />}
             {tab === "chart" && (
               <div className="flex flex-col gap-2">
-                <div className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
-                  Chart source: {(data.chart_source || "unknown").toUpperCase()}
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
+                    Chart source: {(data.chart_source || "unknown").toUpperCase()} · Interval: {(data.chart_label || chartInterval).toUpperCase()}
+                  </div>
+                  <div className="flex gap-1" data-testid="chart-intervals">
+                    {["1m", "5m", "15m", "1h", "1d"].map((it) => (
+                      <button
+                        key={it}
+                        className="font-mono text-[11px] px-2 py-1 rounded-sm border"
+                        onClick={() => changeInterval(it)}
+                        style={{
+                          borderColor: chartInterval === it ? "var(--text-primary)" : "var(--border)",
+                          color: chartInterval === it ? "var(--text-primary)" : "var(--text-muted)",
+                          background: chartInterval === it ? "var(--surface-elevated)" : "transparent",
+                        }}
+                        data-testid={`chart-interval-${it}`}
+                      >
+                        {it}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <PriceChart ohlc={data.ohlc} />
               </div>

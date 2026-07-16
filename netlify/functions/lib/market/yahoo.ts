@@ -150,16 +150,26 @@ export async function fetchQuoteSummaryInfo(
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const qs: any = await yf.quoteSummary(nseYahooSymbol(symbol), {
-        modules: ["summaryDetail", "defaultKeyStatistics", "financialData"],
+        modules: ["summaryDetail", "defaultKeyStatistics", "financialData", "price", "assetProfile"],
       });
       const sd = qs.summaryDetail || {};
       const ks = qs.defaultKeyStatistics || {};
       const fd = qs.financialData || {};
+      const price = qs.price || {};
+      const profile = qs.assetProfile || {};
       out[symbol] = {
+        sector: profile.sector ?? null,
+        industry: profile.industry ?? null,
+        website: profile.website ?? null,
+        longBusinessSummary: profile.longBusinessSummary ?? null,
+        marketCap: price.marketCap ?? sd.marketCap ?? null,
         trailingPE: sd.trailingPE ?? ks.trailingPE ?? null,
+        forwardPE: sd.forwardPE ?? null,
         priceToBook: ks.priceToBook ?? null,
         pegRatio: ks.pegRatio ?? null,
         dividendYield: sd.dividendYield ?? null,
+        trailingEps: ks.trailingEps ?? null,
+        forwardEps: ks.forwardEps ?? null,
         returnOnEquity: fd.returnOnEquity ?? null,
         debtToEquity: fd.debtToEquity ?? null,
         profitMargins: fd.profitMargins ?? ks.profitMargins ?? null,
@@ -170,6 +180,14 @@ export async function fetchQuoteSummaryInfo(
         operatingCashflow: fd.operatingCashflow ?? null,
         targetMeanPrice: fd.targetMeanPrice ?? null,
         currentPrice: fd.currentPrice ?? null,
+        freeCashflow: fd.freeCashflow ?? null,
+        totalCash: fd.totalCash ?? null,
+        totalDebt: fd.totalDebt ?? null,
+        grossMargins: fd.grossMargins ?? null,
+        ebitdaMargins: fd.ebitdaMargins ?? null,
+        fiftyTwoWeekHigh: sd.fiftyTwoWeekHigh ?? null,
+        fiftyTwoWeekLow: sd.fiftyTwoWeekLow ?? null,
+        averageVolume: sd.averageVolume ?? null,
         recommendationMean: fd.recommendationMean ?? null,
         numberOfAnalystOpinions: fd.numberOfAnalystOpinions ?? null,
         heldPercentInsiders: ks.heldPercentInsiders ?? null,
@@ -181,6 +199,16 @@ export async function fetchQuoteSummaryInfo(
     }
   });
   return out;
+}
+
+export async function fetchYahooSearchNews(query: string, count = 10): Promise<Record<string, any>[]> {
+  try {
+    const res = (await yf.search(query, { newsCount: count, quotesCount: 0 })) as unknown as Record<string, any>;
+    return Array.isArray(res.news) ? res.news.slice(0, count) : [];
+  } catch (err) {
+    console.warn(`yahoo-news-search: ${query} failed:`, err instanceof Error ? err.message : err);
+    return [];
+  }
 }
 
 /** Concurrent ~1y daily OHLC fetch for a list of NSE symbols, mapped to the

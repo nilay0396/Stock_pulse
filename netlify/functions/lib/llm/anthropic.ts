@@ -192,6 +192,44 @@ export function fallbackRationale(idea: Dict): string {
   return parts.join(" ");
 }
 
+export async function generateStockDeepDiveMemo(payload: Dict): Promise<string> {
+  try {
+    const system =
+      "You are a senior Indian-equity analyst writing a stock deep-dive memo. " +
+      "Use only the supplied JSON data. Be specific, concise, and practical. " +
+      "Do not invent unavailable F&O, news, fundamentals, earnings, or ownership data. " +
+      "Structure the memo with: Verdict, Technical Setup, Fundamentals, News/Events, F&O, Risks, Action Plan. " +
+      "Use rupee symbol ₹. No hype, no emojis, no disclaimers.";
+    const prompt =
+      "Write a complete but compact deep-dive for this NSE stock using ONLY this data:\n\n" +
+      JSON.stringify(payload).slice(0, 12000);
+    return (await complete(NARRATIVE_MODEL, system, prompt, 1800)).trim();
+  } catch (err) {
+    console.warn(`Deep dive memo failed for ${payload.symbol}:`, err instanceof Error ? err.message : err);
+    return fallbackStockDeepDiveMemo(payload);
+  }
+}
+
+export function fallbackStockDeepDiveMemo(payload: Dict): string {
+  const score = payload.score || {};
+  const tech = payload.technicals || {};
+  const fund = payload.fundamentals || {};
+  const fno = payload.fno || {};
+  const news = payload.news || [];
+  const parts = [
+    `Verdict: ${payload.symbol} is a ${score.direction || "watch"} setup with conviction ${score.conviction ?? "—"}/100.`,
+    `Technical Setup: last close ₹${tech.last_close ?? "—"}, RSI ${tech.rsi_14 ?? "—"}, setup ${tech.setup || "—"}, 1M change ${tech.change_pct_1m ?? "—"}%.`,
+    `Fundamentals: market cap ${fund.marketCap ?? "—"}, trailing P/E ${fund.trailingPE ?? "—"}, ROE ${fund.returnOnEquity ?? "—"}, debt/equity ${fund.debtToEquity ?? "—"}.`,
+    fno.eligible
+      ? `F&O: source ${fno.source}, PCR ${fno.analytics?.pcr ?? "—"}, max call OI ${fno.analytics?.max_oi_call_strike ?? "—"}, max put OI ${fno.analytics?.max_oi_put_strike ?? "—"}.`
+      : `F&O: unavailable for this symbol (${fno.providers_tried?.[0]?.error || "not F&O eligible or no data"}).`,
+    news.length ? `News/Events: ${news.slice(0, 3).map((n: Dict) => n.title).join("; ")}.` : "News/Events: no fresh matched headlines available.",
+  ];
+  if (score.reasons?.length) parts.push(`Supports: ${score.reasons.slice(0, 4).join("; ")}.`);
+  if (score.risks?.length) parts.push(`Risks: ${score.risks.slice(0, 4).join("; ")}.`);
+  return parts.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Report narrative (with allowlist guardrail)
 // ---------------------------------------------------------------------------

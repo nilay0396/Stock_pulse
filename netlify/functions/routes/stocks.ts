@@ -1,17 +1,29 @@
 import { Hono } from "hono";
 import { db } from "../lib/db.js";
 import { requireUser, type PublicUser } from "../lib/auth.js";
-import { fetchEquityOhlcDated, fetchQuoteSummaryInfo } from "../lib/market/yahoo.js";
+import { fetchEquityOhlcDated, fetchQuoteSummaryInfo, fetchYahooSearchNews } from "../lib/market/yahoo.js";
 import { computeSnapshot } from "../lib/scoring/indicators.js";
 import { entryStopTarget } from "../lib/scoring/scoring.js";
 import { getAuthenticatedKiteClient } from "../lib/kite/client.js";
 import { fetchOptionChain } from "../lib/kite/optionChain.js";
 import { fetchHistoricalBarsDated } from "../lib/kite/historical.js";
+import { fetchRssNews } from "../lib/connectors/rssNews.js";
+import { fallbackStockDeepDiveMemo, generateStockDeepDiveMemo, llmAvailable } from "../lib/llm/anthropic.js";
 
 type Variables = { user: PublicUser };
 export const stocksRoutes = new Hono<{ Variables: Variables }>();
 
 type Dict = Record<string, any>;
+type ChartInterval = "minute" | "5minute" | "15minute" | "60minute" | "day";
+
+function chartConfig(inputInterval?: string, inputRange?: string): { interval: ChartInterval; days: number; label: string } {
+  const key = (inputInterval || "1d").toLowerCase();
+  if (key === "1m" || key === "minute") return { interval: "minute", days: inputRange === "5d" ? 5 : 2, label: "1m" };
+  if (key === "5m" || key === "5minute") return { interval: "5minute", days: inputRange === "30d" ? 30 : 10, label: "5m" };
+  if (key === "15m" || key === "15minute") return { interval: "15minute", days: inputRange === "60d" ? 60 : 30, label: "15m" };
+  if (key === "1h" || key === "60minute") return { interval: "60minute", days: inputRange === "180d" ? 180 : 90, label: "1h" };
+  return { interval: "day", days: inputRange === "1y" ? 370 : inputRange === "3mo" ? 110 : 190, label: "1d" };
+}
 
 function verdictFor(score: Dict | null, horizon: "weekly" | "monthly"): "buy" | "hold" | "sell" | "avoid" {
   if (!score) return "hold";
@@ -157,14 +169,52 @@ async function latestSnapshot(symbol: string): Promise<Dict | null> {
   return data || null;
 }
 
-async function stockNews(symbol: string, limit = 20): Promise<Dict[]> {
+async function stockNews(symbol: string, limit = 20, universe?: Dict): Promise<Dict[]> {
   const { data } = await db
     .from("news_items")
     .select("*")
     .eq("symbol", symbol)
     .order("ingested_at", { ascending: false })
     .limit(limit);
-  return (data || []).map(mapNews);
+  const stored = (data || []).map(mapNews);
+
+  const [rss, yahoo] = await Promise.all([
+    universe ? fetchRssNews([{ symbol, name: universe.name }], 20).catch(() => []) : Promise.resolve([]),
+    fetchYahooSearchNews(`${symbol}.NS ${universe?.name || ""}`, 10).catch(() => []),
+  ]);
+
+  const liveRss = rss
+    .filter((item) => item.matched_symbols.includes(symbol))
+    .map((item) => ({
+      title: item.title,
+      link: item.link,
+      source: item.source,
+      publisher: item.source,
+      published: item.pub_date,
+      published_at: item.pub_date,
+      ingested_at: item.ingested_at,
+      category: item.scope,
+      sentiment: null,
+    }));
+  const yahooNews = yahoo.map((item) => ({
+    title: item.title,
+    link: item.link,
+    source: item.publisher || "Yahoo Finance",
+    publisher: item.publisher || "Yahoo Finance",
+    published: item.providerPublishTime ? new Date(item.providerPublishTime * 1000).toISOString() : null,
+    published_at: item.providerPublishTime ? new Date(item.providerPublishTime * 1000).toISOString() : null,
+    ingested_at: new Date().toISOString(),
+    category: "market",
+    sentiment: null,
+  }));
+
+  const seen = new Set<string>();
+  return [...stored, ...liveRss, ...yahooNews].filter((item) => {
+    const key = String(item.title || "").toLowerCase().trim();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, limit);
 }
 
 async function stockEvents(symbol: string): Promise<Dict> {
@@ -201,23 +251,29 @@ async function stockFno(symbol: string): Promise<Dict> {
   }
 }
 
-async function stockOhlc(symbol: string, days = 370): Promise<{ candles: Dict[]; source: "kite" | "yahoo" | "none" }> {
+async function stockOhlc(
+  symbol: string,
+  days = 370,
+  interval: ChartInterval = "day",
+): Promise<{ candles: Dict[]; source: "kite" | "yahoo" | "none"; interval: ChartInterval }> {
   try {
     const kc = await getAuthenticatedKiteClient();
-    const kiteCandles = await fetchHistoricalBarsDated(kc, symbol, days, "day");
-    if (kiteCandles && kiteCandles.length) return { candles: kiteCandles, source: "kite" };
+    const kiteCandles = await fetchHistoricalBarsDated(kc, symbol, days, interval);
+    if (kiteCandles && kiteCandles.length) return { candles: kiteCandles, source: "kite", interval };
   } catch {
     // Fall through to Yahoo; Deep Dive should remain usable if Kite auth expires.
   }
 
   const yahooCandles = await fetchEquityOhlcDated(symbol, days).catch(() => []);
-  if (yahooCandles.length) return { candles: yahooCandles, source: "yahoo" };
-  return { candles: [], source: "none" };
+  if (yahooCandles.length) return { candles: yahooCandles, source: "yahoo", interval: "day" };
+  return { candles: [], source: "none", interval };
 }
 
 // POST /stocks/:symbol/deep-dive
 stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
   const symbol = (c.req.param("symbol") || "").toUpperCase();
+  const body = (await c.req.json().catch(() => ({}))) as Dict;
+  const cfg = chartConfig(body.interval, body.range);
   const { data: universe, error: universeError } = await db
     .from("stock_universe")
     .select("*")
@@ -227,11 +283,11 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
   if (!universe) return c.json({ detail: "Stock not found" }, 404);
 
   const [ohlcResult, fundamentalsMap, storedSnapshot, score, news, events, fno] = await Promise.all([
-    stockOhlc(symbol),
+    stockOhlc(symbol, cfg.days, cfg.interval),
     fetchQuoteSummaryInfo([symbol]).catch(() => ({} as Record<string, Record<string, any>>)),
     latestSnapshot(symbol),
     latestScore(symbol),
-    stockNews(symbol),
+    stockNews(symbol, 25, universe),
     stockEvents(symbol),
     stockFno(symbol),
   ]);
@@ -245,16 +301,36 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
   }))) : {};
   const technicals = { ...(storedSnapshot || {}), ...computedSnapshot };
   const fundamentals = (fundamentalsMap as Record<string, Record<string, any>>)[symbol] || {};
-  const aiSummary = fallbackAiSummary(universe, technicals, score, news);
+  const sector = universe.sector === "Other" && fundamentals.sector ? fundamentals.sector : universe.sector;
+  const industry = universe.industry === "Unknown" && fundamentals.industry ? fundamentals.industry : universe.industry;
+  const memoPayload = {
+    symbol,
+    name: universe.name,
+    sector,
+    industry,
+    technicals,
+    fundamentals,
+    score,
+    weekly: buildPlan(technicals, score, "weekly"),
+    monthly: buildPlan(technicals, score, "monthly"),
+    news,
+    events,
+    fno,
+  };
+  const aiSummary = body.skip_llm || !llmAvailable()
+    ? fallbackStockDeepDiveMemo(memoPayload)
+    : await generateStockDeepDiveMemo(memoPayload);
 
   return c.json({
     symbol,
     name: universe.name,
-    sector: universe.sector,
-    industry: universe.industry,
+    sector,
+    industry,
     market_cap_tier: universe.market_cap_tier,
     ohlc,
     chart_source: ohlcResult.source,
+    chart_interval: ohlcResult.interval,
+    chart_label: cfg.label,
     technicals,
     fundamentals,
     score,
@@ -286,7 +362,7 @@ stocksRoutes.get("/:symbol", requireUser, async (c) => {
 stocksRoutes.get("/:symbol/history", requireUser, async (c) => {
   const symbol = (c.req.param("symbol") || "").toUpperCase();
   const period = c.req.query("period") || "6mo";
-  const days = period === "1mo" ? 45 : period === "3mo" ? 110 : period === "1y" ? 370 : 190;
-  const { candles, source } = await stockOhlc(symbol, days);
-  return c.json({ symbol, candles, source });
+  const cfg = chartConfig(c.req.query("interval"), period);
+  const { candles, source, interval } = await stockOhlc(symbol, cfg.days, cfg.interval);
+  return c.json({ symbol, candles, source, interval, label: cfg.label });
 });
