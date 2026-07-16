@@ -1,0 +1,84 @@
+name: Daily Report Pipeline
+
+# Runs the Market Pulse report-generation pipeline outside Netlify's function
+# timeout. ~07:00 IST on weekdays, plus manual dispatch. See
+# netlify/functions/pipeline/run.ts.
+on:
+  schedule:
+    # 01:30 UTC = 07:00 IST (no DST). Mon–Fri.
+    - cron: "30 1 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      skip_llm:
+        description: "Skip LLM (deterministic fallback narrative/rationales, no Anthropic cost)"
+        type: boolean
+        default: false
+      universe_limit:
+        description: "Cap the universe to the first N stocks (blank = full)"
+        type: string
+        default: "51"
+      expand_universe:
+        description: "First populate stock_universe from the Kite instrument cache (~2000 NSE EQ)"
+        type: boolean
+        default: false
+      force:
+        description: "Force a run even if today already has a successful report"
+        type: boolean
+        default: false
+
+concurrency:
+  group: daily-report
+  cancel-in-progress: false
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install function dependencies
+        working-directory: netlify/functions
+        run: npm ci
+
+      - name: Refresh Kite access token (best-effort)
+        # The pipeline reads the Kite token from Supabase system_settings.
+        # Refresh it via the Netlify function first so the liquidity gate +
+        # F&O have a fresh token. Non-fatal: the pipeline degrades to
+        # yahoo-only screening if this fails.
+        continue-on-error: true
+        run: |
+          curl -sS -X POST "${NETLIFY_SITE_URL%/}/.netlify/functions/kite-token-refresh" \
+            -H "x-refresh-secret: ${KITE_REFRESH_SECRET}" \
+            --max-time 120 || echo "kite token refresh failed (continuing)"
+        env:
+          NETLIFY_SITE_URL: ${{ secrets.NETLIFY_SITE_URL }}
+          KITE_REFRESH_SECRET: ${{ secrets.KITE_REFRESH_SECRET }}
+
+      - name: Run pipeline
+        working-directory: netlify/functions
+        run: |
+          ARGS=""
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            # Scheduled runs: full configured universe, LLM on.
+            ARGS=""
+          else
+            [ "${{ inputs.skip_llm }}" = "true" ] && ARGS="$ARGS --skip-llm"
+            [ "${{ inputs.expand_universe }}" = "true" ] && ARGS="$ARGS --expand-universe"
+            [ "${{ inputs.force }}" = "true" ] && ARGS="$ARGS --force"
+            if [ -n "${{ inputs.universe_limit }}" ]; then ARGS="$ARGS --universe-limit ${{ inputs.universe_limit }}"; fi
+          fi
+          echo "Running: npx tsx pipeline/run.ts $ARGS"
+          npx tsx pipeline/run.ts $ARGS
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
