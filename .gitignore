@@ -99,3 +99,6 @@ frontend/node_modules/.cache/default-development/20.pack
 credentials.json
 *.key
 .credentials
+
+# Local Netlify folder
+.netlify

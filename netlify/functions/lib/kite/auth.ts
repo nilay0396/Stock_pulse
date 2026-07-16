@@ -33,6 +33,26 @@ interface KiteCreds {
   totpSecret: string;
 }
 
+interface KiteApiCreds {
+  apiKey: string;
+  apiSecret: string;
+}
+
+function requireApiCreds(): KiteApiCreds {
+  const apiKey = process.env.KITE_API_KEY;
+  const apiSecret = process.env.KITE_API_SECRET;
+  const missing = Object.entries({
+    KITE_API_KEY: apiKey,
+    KITE_API_SECRET: apiSecret,
+  })
+    .filter(([, v]) => !v)
+    .map(([k]) => k);
+  if (missing.length) {
+    throw new Error(`Missing Kite env vars: ${missing.join(", ")}`);
+  }
+  return { apiKey: apiKey!, apiSecret: apiSecret! };
+}
+
 function requireCreds(): KiteCreds {
   const apiKey = process.env.KITE_API_KEY;
   const apiSecret = process.env.KITE_API_SECRET;
@@ -324,17 +344,8 @@ export interface KiteTokenRefreshResult {
   refreshedAt: string;
 }
 
-/** Runs the full login flow and persists the resulting access_token to
- * system_settings. Every Kite-dependent connector reads it from there —
- * no local .env to rewrite, no process to restart (serverless functions
- * read current settings on every invocation). */
-export async function refreshKiteToken(): Promise<KiteTokenRefreshResult> {
-  const creds = requireCreds();
-  console.log("kite-auth: starting login flow");
-
-  const requestToken = await getRequestToken(creds);
-  console.log("kite-auth: request_token obtained");
-
+export async function exchangeAndPersistKiteRequestToken(requestToken: string): Promise<KiteTokenRefreshResult> {
+  const creds = requireApiCreds();
   const kc = new KiteConnect({ api_key: creds.apiKey });
   const session = await kc.generateSession(requestToken, creds.apiSecret);
   console.log("kite-auth: session generated");
@@ -353,4 +364,18 @@ export async function refreshKiteToken(): Promise<KiteTokenRefreshResult> {
 
   console.log("kite-auth: token refreshed and persisted");
   return { accessToken: session.access_token, refreshedAt };
+}
+
+/** Runs the full login flow and persists the resulting access_token to
+ * system_settings. Every Kite-dependent connector reads it from there —
+ * no local .env to rewrite, no process to restart (serverless functions
+ * read current settings on every invocation). */
+export async function refreshKiteToken(): Promise<KiteTokenRefreshResult> {
+  const creds = requireCreds();
+  console.log("kite-auth: starting login flow");
+
+  const requestToken = await getRequestToken(creds);
+  console.log("kite-auth: request_token obtained");
+
+  return exchangeAndPersistKiteRequestToken(requestToken);
 }
