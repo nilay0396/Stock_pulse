@@ -176,7 +176,7 @@ function summarizeHtmlPage(html: string): string {
   const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim() || "no-title";
   const hrefs = [...html.matchAll(/\b(?:href|src)\s*=\s*["']([^"']+)["']/gi)]
     .map((m) => decodeHtmlAttr(m[1]))
-    .filter((ref) => /\.(?:js|css)(?:\?|$)/i.test(ref) || ref.includes("/static/"))
+    .filter((ref) => /\.(?:js|css)(?:\?|$)/i.test(ref))
     .slice(0, 12)
     .map((m) => {
       const ref = m;
