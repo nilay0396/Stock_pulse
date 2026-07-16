@@ -83,6 +83,16 @@ function extractRequestToken(value: string | null | undefined): string | null {
   }
 }
 
+function extractQueryParam(value: string | null | undefined, key: string): string | null {
+  if (!value || !value.includes(`${key}=`)) return null;
+  try {
+    return new URL(value).searchParams.get(key);
+  } catch {
+    const match = value.match(new RegExp(`[?&]${key}=([^&#]+)`));
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+}
+
 /** Mirrors the reference script's window-alignment guard: if the current
  * 30s TOTP window is about to expire, wait for a fresh one before
  * generating/posting a code, to avoid a race against expiry. */
@@ -150,6 +160,28 @@ async function getRequestToken(creds: KiteCreds): Promise<string> {
     const candidateUrl = location ? new URL(location, url).toString() : res.url;
     requestToken = extractRequestToken(candidateUrl);
     if (requestToken) break;
+
+    const sessId = extractQueryParam(candidateUrl, "sess_id");
+    if (sessId) {
+      const finishRes = await fetchWithCookies("https://kite.zerodha.com/connect/finish", {
+        method: "POST",
+        headers: { ...BROWSER_HEADERS, "Content-Type": "application/x-www-form-urlencoded" },
+        redirect: "manual",
+        body: new URLSearchParams({
+          api_key: creds.apiKey,
+          sess_id: sessId,
+          authorize: "true",
+        }).toString(),
+      });
+      const finishLocation = finishRes.headers.get("location");
+      const finishUrl = finishLocation ? new URL(finishLocation, "https://kite.zerodha.com/connect/finish").toString() : finishRes.url;
+      requestToken = extractRequestToken(finishUrl);
+      if (requestToken) break;
+
+      const finishText = await finishRes.text();
+      requestToken = extractRequestToken(finishText);
+      if (requestToken) break;
+    }
 
     const text = await res.text();
     requestToken = extractRequestToken(text);
