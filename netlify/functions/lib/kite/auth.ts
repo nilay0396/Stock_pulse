@@ -110,6 +110,68 @@ function withQueryParam(value: string, key: string, paramValue: string): string 
   return url.toString();
 }
 
+function decodeHtmlAttr(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function getHtmlAttr(tag: string, name: string): string | null {
+  const match = tag.match(new RegExp(`${name}\\s*=\\s*["']([^"']*)["']`, "i"));
+  return match ? decodeHtmlAttr(match[1]) : null;
+}
+
+interface ParsedForm {
+  action: string;
+  method: string;
+  fields: URLSearchParams;
+}
+
+function parseAuthorizeForm(html: string, baseUrl: string): ParsedForm | null {
+  const formMatch = html.match(/<form\b[^>]*>[\s\S]*?<\/form>/i);
+  if (!formMatch) return null;
+
+  const formHtml = formMatch[0];
+  const formOpen = formHtml.match(/<form\b[^>]*>/i)?.[0] || "";
+  const actionAttr = getHtmlAttr(formOpen, "action") || baseUrl;
+  const method = (getHtmlAttr(formOpen, "method") || "GET").toUpperCase();
+  const action = new URL(actionAttr, baseUrl).toString();
+  const fields = new URLSearchParams();
+
+  for (const inputMatch of formHtml.matchAll(/<input\b[^>]*>/gi)) {
+    const input = inputMatch[0];
+    const name = getHtmlAttr(input, "name");
+    if (!name) continue;
+    const type = (getHtmlAttr(input, "type") || "text").toLowerCase();
+    if (type === "submit" || type === "button") continue;
+    fields.set(name, getHtmlAttr(input, "value") || "");
+  }
+
+  const submitControls = [...formHtml.matchAll(/<(?:button|input)\b[^>]*>/gi)].map((m) => m[0]);
+  const chosenSubmit =
+    submitControls.find((tag) => {
+      const type = (getHtmlAttr(tag, "type") || "submit").toLowerCase();
+      const value = (getHtmlAttr(tag, "value") || "").toLowerCase();
+      const text = tag.replace(/<[^>]+>/g, "").toLowerCase();
+      return type === "submit" && !value.includes("cancel") && !text.includes("cancel");
+    }) || null;
+
+  if (chosenSubmit) {
+    const name = getHtmlAttr(chosenSubmit, "name");
+    if (name) fields.set(name, getHtmlAttr(chosenSubmit, "value") || "");
+  }
+
+  console.log(
+    `kite-auth: authorize form found method=${method} action=${describeUrl(action)} fields=${[...fields.keys()]
+      .sort()
+      .join(",")}`,
+  );
+  return { action, method, fields };
+}
+
 /** Mirrors the reference script's window-alignment guard: if the current
  * 30s TOTP window is about to expire, wait for a fresh one before
  * generating/posting a code, to avoid a race against expiry. */
@@ -182,7 +244,7 @@ async function getRequestToken(creds: KiteCreds): Promise<string> {
     if (requestToken) break;
 
     const sessId = extractQueryParam(candidateUrl, "sess_id");
-    if (sessId) {
+    if (sessId && res.status !== 200) {
       console.log("kite-auth: connect session id obtained; continuing with skip_session");
       url = withQueryParam(candidateUrl, "skip_session", "true");
       continue;
@@ -191,6 +253,40 @@ async function getRequestToken(creds: KiteCreds): Promise<string> {
     const text = await res.text();
     requestToken = extractRequestToken(text);
     if (requestToken) break;
+
+    if (sessId && res.status === 200) {
+      const form = parseAuthorizeForm(text, candidateUrl);
+      if (form) {
+        const submitUrl = form.method === "GET" ? `${form.action}?${form.fields.toString()}` : form.action;
+        const formRes = await fetchWithCookies(submitUrl, {
+          method: form.method === "GET" ? "GET" : "POST",
+          headers: { ...BROWSER_HEADERS, "Content-Type": "application/x-www-form-urlencoded" },
+          redirect: "manual",
+          body: form.method === "GET" ? undefined : form.fields.toString(),
+        });
+        const formLocation = formRes.headers.get("location");
+        const formCandidateUrl = formLocation ? new URL(formLocation, form.action).toString() : formRes.url;
+        console.log(
+          `kite-auth: authorize form submit status=${formRes.status} current=${describeUrl(formRes.url)} location=${describeUrl(
+            formCandidateUrl,
+          )}`,
+        );
+
+        requestToken = extractRequestToken(formCandidateUrl);
+        if (requestToken) break;
+
+        const formText = await formRes.text();
+        requestToken = extractRequestToken(formText);
+        if (requestToken) break;
+
+        if (formLocation) {
+          url = formCandidateUrl;
+          continue;
+        }
+      } else {
+        console.log("kite-auth: authorize page had no form");
+      }
+    }
 
     if (!location) break;
     url = candidateUrl;
