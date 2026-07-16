@@ -93,6 +93,17 @@ function extractQueryParam(value: string | null | undefined, key: string): strin
   }
 }
 
+function describeUrl(value: string | null | undefined): string {
+  if (!value) return "none";
+  try {
+    const url = new URL(value);
+    const queryKeys = [...url.searchParams.keys()].sort();
+    return `${url.host}${url.pathname}${queryKeys.length ? `?keys=${queryKeys.join(",")}` : ""}`;
+  } catch {
+    return value.includes("request_token=") ? "unparseable-url-with-request-token" : "unparseable-url";
+  }
+}
+
 /** Mirrors the reference script's window-alignment guard: if the current
  * 30s TOTP window is about to expire, wait for a fresh one before
  * generating/posting a code, to avoid a race against expiry. */
@@ -158,6 +169,9 @@ async function getRequestToken(creds: KiteCreds): Promise<string> {
     const res = await fetchWithCookies(url, { headers: BROWSER_HEADERS, redirect: "manual" });
     const location = res.headers.get("location");
     const candidateUrl = location ? new URL(location, url).toString() : res.url;
+    console.log(
+      `kite-auth: oauth hop ${hop + 1} status=${res.status} current=${describeUrl(res.url)} location=${describeUrl(candidateUrl)}`,
+    );
     requestToken = extractRequestToken(candidateUrl);
     if (requestToken) break;
 
