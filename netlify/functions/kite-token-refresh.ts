@@ -103,6 +103,17 @@ export default async (req: Request): Promise<Response> => {
     const mode = new URL(req.url).searchParams.get("mode");
     const tokenResult = mode === "instruments" ? null : await refreshKiteToken();
 
+    if (mode !== "instruments") {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          refreshed_at: tokenResult?.refreshedAt ?? null,
+          instruments: null,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
     const kc = await getAuthenticatedKiteClient();
     const instrumentCounts = await refreshInstrumentCache(kc);
     console.log(
