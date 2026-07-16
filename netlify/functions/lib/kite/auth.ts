@@ -172,6 +172,22 @@ function parseAuthorizeForm(html: string, baseUrl: string): ParsedForm | null {
   return { action, method, fields };
 }
 
+function summarizeHtmlPage(html: string): string {
+  const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim() || "no-title";
+  const hrefs = [...html.matchAll(/\b(?:href|src)\s*=\s*["']([^"']+)["']/gi)]
+    .slice(0, 5)
+    .map((m) => describeUrl(decodeHtmlAttr(m[1])));
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/[A-Za-z0-9_-]{12,}/g, "[redacted]")
+    .trim()
+    .slice(0, 220);
+  return `title="${title}" refs=${hrefs.join("|") || "none"} text="${text}"`;
+}
+
 /** Mirrors the reference script's window-alignment guard: if the current
  * 30s TOTP window is about to expire, wait for a fresh one before
  * generating/posting a code, to avoid a race against expiry. */
@@ -284,7 +300,7 @@ async function getRequestToken(creds: KiteCreds): Promise<string> {
           continue;
         }
       } else {
-        console.log("kite-auth: authorize page had no form");
+        console.log(`kite-auth: authorize page had no form; ${summarizeHtmlPage(text)}`);
       }
     }
 
