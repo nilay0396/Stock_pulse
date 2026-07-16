@@ -4,6 +4,8 @@ import { formatTelegramReport, sendTelegram } from "./telegram.js";
 import { renderReportEmail, renderReportText, sendEmail } from "./email.js";
 
 type DeliveryResult = { attempted: number; sent: number; dry_run: number; failed: number; skipped: number };
+type DeliveryStatus = "sent" | "dry_run" | "failed" | "skipped";
+type ChannelResult = { ok: boolean; status: DeliveryStatus; error?: string; response_meta?: Record<string, unknown> };
 
 const RESERVED_EMAIL_DOMAINS = new Set(["example.com", "example.org", "example.net"]);
 
@@ -69,10 +71,26 @@ export async function deliverReport(reportRunId: string): Promise<DeliveryResult
   const defaultChat = asString(settings, "telegram_default_chat_id");
   if (defaultChat) telegramRecipients.set(defaultChat, null);
 
-  const telegramText = formatTelegramReport(context);
+  const telegramMessages = formatTelegramReport(context);
   for (const [chatId, userId] of telegramRecipients) {
     result.attempted += 1;
-    const res = await sendTelegram(settings, chatId, telegramText);
+    let res: ChannelResult = { ok: true, status: "sent", response_meta: { message_count: 0 } };
+    const messageIds: unknown[] = [];
+    for (const message of telegramMessages) {
+      const partRes = await sendTelegram(settings, chatId, message);
+      if (partRes.response_meta?.message_id) messageIds.push(partRes.response_meta.message_id);
+      res = {
+        ok: partRes.ok,
+        status: partRes.status,
+        error: partRes.error,
+        response_meta: {
+          ...(partRes.response_meta || {}),
+          message_count: telegramMessages.length,
+          message_ids: messageIds,
+        },
+      };
+      if (!partRes.ok || partRes.status === "failed" || partRes.status === "skipped") break;
+    }
     result[res.status] += 1;
     await logDelivery({
       report_run_id: reportRunId,

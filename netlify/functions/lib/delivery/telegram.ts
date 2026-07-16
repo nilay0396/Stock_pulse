@@ -14,34 +14,79 @@ function escapeHtml(value: unknown): string {
     .replace(/>/g, "&gt;");
 }
 
-export function formatTelegramReport(context: Record<string, any>): string {
-  const weekly = Array.isArray(context.top_weekly) ? context.top_weekly.slice(0, 5) : [];
-  const monthly = Array.isArray(context.top_monthly) ? context.top_monthly.slice(0, 3) : [];
-  const funnel = context.funnel || {};
+const TELEGRAM_MAX_MESSAGE = 3800;
+
+function ideaLines(idea: any): string[] {
+  return [
+    `<b>${escapeHtml(idea.symbol)}</b>${idea.name ? ` - ${escapeHtml(idea.name)}` : ""}`,
+    `Direction: ${escapeHtml(idea.direction)}`,
+    `Conviction: ${escapeHtml(idea.conviction)}`,
+    `Entry: ${escapeHtml(idea.entry_low)} - ${escapeHtml(idea.entry_high)}`,
+    `Stop: ${escapeHtml(idea.stop_loss)}`,
+    `Target: ${escapeHtml(idea.target_low)} - ${escapeHtml(idea.target_high)}`,
+  ];
+}
+
+function splitMessages(lines: string[]): string[] {
+  const messages: string[] = [];
+  let current = "";
+
+  const pushCurrent = () => {
+    if (current.trim()) messages.push(current.trim());
+    current = "";
+  };
+
+  for (const line of lines) {
+    if (line.length > TELEGRAM_MAX_MESSAGE) {
+      pushCurrent();
+      for (let i = 0; i < line.length; i += TELEGRAM_MAX_MESSAGE) {
+        messages.push(line.slice(i, i + TELEGRAM_MAX_MESSAGE));
+      }
+      continue;
+    }
+
+    const next = current ? `${current}\n${line}` : line;
+    if (next.length > TELEGRAM_MAX_MESSAGE) {
+      pushCurrent();
+      current = line;
+    } else {
+      current = next;
+    }
+  }
+  pushCurrent();
+  return messages.length ? messages : ["Report generated successfully."];
+}
+
+export function formatTelegramReport(context: Record<string, any>): string[] {
+  const weekly = Array.isArray(context.top_weekly) ? context.top_weekly : [];
+  const monthly = Array.isArray(context.top_monthly) ? context.top_monthly : [];
   const lines = [
-    `<b>Market Pulse India</b>`,
-    `<b>${escapeHtml(context.run_date)}</b> | screened ${escapeHtml(funnel.pool ?? context.universe_count ?? "-")} | ideas ${weekly.length + monthly.length}`,
+    `<b>MARKET PULSE INDIA</b>`,
+    `<b>Daily Report - ${escapeHtml(context.run_date)}</b>`,
     "",
   ];
 
-  if (context.narrative) lines.push(escapeHtml(String(context.narrative).slice(0, 650)), "");
+  lines.push(escapeHtml(context.narrative || "Report generated successfully."), "");
 
+  lines.push("<b>Weekly Ideas</b>");
   if (weekly.length) {
-    lines.push("<b>Weekly</b>");
     for (const idea of weekly) {
-      lines.push(`${escapeHtml(idea.symbol)} ${escapeHtml(idea.direction)} | ${escapeHtml(idea.conviction)} | ${escapeHtml(idea.entry_low)}-${escapeHtml(idea.entry_high)}`);
+      lines.push(...ideaLines(idea), "");
     }
+  } else {
+    lines.push("No weekly ideas for this run.", "");
   }
 
+  lines.push("<b>Monthly Ideas</b>");
   if (monthly.length) {
-    lines.push("", "<b>Monthly</b>");
     for (const idea of monthly) {
-      lines.push(`${escapeHtml(idea.symbol)} ${escapeHtml(idea.direction)} | ${escapeHtml(idea.conviction)} | ${escapeHtml(idea.entry_low)}-${escapeHtml(idea.entry_high)}`);
+      lines.push(...ideaLines(idea), "");
     }
+  } else {
+    lines.push("No monthly ideas for this run.");
   }
 
-  const text = lines.join("\n").trim();
-  return text.length > 3900 ? `${text.slice(0, 3890)}\n...` : text;
+  return splitMessages(lines);
 }
 
 export async function sendTelegram(
