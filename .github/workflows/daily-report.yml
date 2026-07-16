@@ -29,6 +29,10 @@ on:
         description: "Force a run even if today already has a successful report"
         type: boolean
         default: false
+      skip_delivery:
+        description: "Generate the report but do not send Telegram/email"
+        type: boolean
+        default: true
 
 concurrency:
   group: daily-report
@@ -106,6 +110,7 @@ jobs:
             ARGS="--expand-universe"
           else
             [ "${{ inputs.skip_llm }}" = "true" ] && ARGS="$ARGS --skip-llm"
+            [ "${{ inputs.skip_delivery }}" = "true" ] && ARGS="$ARGS --skip-delivery"
             [ "${{ inputs.expand_universe }}" = "true" ] && ARGS="$ARGS --expand-universe"
             [ "${{ inputs.force }}" = "true" ] && ARGS="$ARGS --force"
             if [ -n "${{ inputs.universe_limit }}" ]; then ARGS="$ARGS --universe-limit ${{ inputs.universe_limit }}"; fi

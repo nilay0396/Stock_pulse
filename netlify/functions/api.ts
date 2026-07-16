@@ -9,6 +9,7 @@ import { tradeIdeasRoutes } from "./routes/tradeIdeas.js";
 import { macroRoutes } from "./routes/macro.js";
 import { newsRoutes } from "./routes/news.js";
 import { flowsRoutes } from "./routes/flows.js";
+import { adminRoutes } from "./routes/admin.js";
 
 const app = new Hono().basePath("/api");
 
@@ -21,6 +22,7 @@ app.route("/ideas", tradeIdeasRoutes);
 app.route("/macro", macroRoutes);
 app.route("/news", newsRoutes);
 app.route("/flows", flowsRoutes);
+app.route("/admin", adminRoutes);
 
 app.get("/", (c) => c.json({ name: "Market Pulse India API", status: "ok" }));
 

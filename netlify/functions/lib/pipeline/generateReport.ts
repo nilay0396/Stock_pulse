@@ -36,6 +36,7 @@ import {
 } from "../llm/anthropic.js";
 import { loadUniverse, type UniverseRow } from "./universe.js";
 import { getAuthenticatedKiteClient } from "../kite/client.js";
+import { deliverReport } from "../delivery/deliverReport.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Dict = Record<string, any>;
@@ -46,6 +47,7 @@ const EXPORT_SECTORS = new Set(["IT", "Pharma", "Chemicals"]);
 
 export interface RunOptions {
   skipLlm?: boolean;
+  skipDelivery?: boolean;
   universeLimit?: number;
   force?: boolean;
   triggeredBy?: string;
@@ -638,6 +640,15 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
     if (updErr) throw new Error(`report_runs update failed: ${updErr.message}`);
 
     console.log(`report: success ${runId} — weekly=${weekly.length} monthly=${monthly.length} in ${funnelStats.total_seconds}s`);
+    if (!opts.skipDelivery) {
+      try {
+        const delivery = await deliverReport(runId);
+        console.log("delivery result:", JSON.stringify(delivery));
+      } catch (err) {
+        console.warn("delivery warning:", err instanceof Error ? err.message : err);
+      }
+    }
+
     return { id: runId, status: "success", funnel: funnelStats };
   } catch (err) {
     console.error("report: failed:", err instanceof Error ? err.stack || err.message : err);

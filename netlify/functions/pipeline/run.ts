@@ -1,6 +1,6 @@
 /**
  * CLI entry for the daily report pipeline (run by GitHub Actions).
- *   npx tsx pipeline/run.ts [--skip-llm] [--universe-limit N] [--force] [--expand-universe]
+ *   npx tsx pipeline/run.ts [--skip-llm] [--skip-delivery] [--universe-limit N] [--force] [--expand-universe]
  *
  * Env required: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY
  *   (unless --skip-llm), KITE_API_KEY (for the optional liquidity gate),
@@ -21,6 +21,7 @@ function getValue(name: string): string | undefined {
 
 async function main(): Promise<void> {
   const skipLlm = getFlag("skip-llm");
+  const skipDelivery = getFlag("skip-delivery");
   const force = getFlag("force");
   const expand = getFlag("expand-universe");
   const limitRaw = getValue("universe-limit");
@@ -32,7 +33,7 @@ async function main(): Promise<void> {
     console.log(`pipeline: universe expanded — inserted=${res.inserted} total=${res.total}`);
   }
 
-  const result = await generateReport({ skipLlm, force, universeLimit, triggeredBy: "github-actions" });
+  const result = await generateReport({ skipLlm, skipDelivery, force, universeLimit, triggeredBy: "github-actions" });
   console.log("pipeline result:", JSON.stringify(result));
   if (result.funnel) {
     console.log("pipeline funnel:", JSON.stringify(result.funnel));
