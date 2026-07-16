@@ -104,6 +104,12 @@ function describeUrl(value: string | null | undefined): string {
   }
 }
 
+function withQueryParam(value: string, key: string, paramValue: string): string {
+  const url = new URL(value);
+  url.searchParams.set(key, paramValue);
+  return url.toString();
+}
+
 /** Mirrors the reference script's window-alignment guard: if the current
  * 30s TOTP window is about to expire, wait for a fresh one before
  * generating/posting a code, to avoid a race against expiry. */
@@ -177,26 +183,9 @@ async function getRequestToken(creds: KiteCreds): Promise<string> {
 
     const sessId = extractQueryParam(candidateUrl, "sess_id");
     if (sessId) {
-      console.log("kite-auth: connect session id obtained; authorizing app");
-      const finishRes = await fetchWithCookies("https://kite.zerodha.com/connect/finish", {
-        method: "POST",
-        headers: { ...BROWSER_HEADERS, "Content-Type": "application/x-www-form-urlencoded" },
-        redirect: "manual",
-        body: new URLSearchParams({
-          api_key: creds.apiKey,
-          sess_id: sessId,
-          authorize: "true",
-        }).toString(),
-      });
-      const finishLocation = finishRes.headers.get("location");
-      const finishUrl = finishLocation ? new URL(finishLocation, "https://kite.zerodha.com/connect/finish").toString() : finishRes.url;
-      requestToken = extractRequestToken(finishUrl);
-      if (requestToken) break;
-
-      const finishText = await finishRes.text();
-      requestToken = extractRequestToken(finishText);
-      if (requestToken) break;
-      console.log(`kite-auth: connect finish did not yield token (status=${finishRes.status})`);
+      console.log("kite-auth: connect session id obtained; continuing with skip_session");
+      url = withQueryParam(candidateUrl, "skip_session", "true");
+      continue;
     }
 
     const text = await res.text();
