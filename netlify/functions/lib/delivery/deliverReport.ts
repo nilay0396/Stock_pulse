@@ -5,6 +5,15 @@ import { renderReportEmail, renderReportText, sendEmail } from "./email.js";
 
 type DeliveryResult = { attempted: number; sent: number; dry_run: number; failed: number; skipped: number };
 
+const RESERVED_EMAIL_DOMAINS = new Set(["example.com", "example.org", "example.net"]);
+
+function isDeliverableEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const trimmed = email.trim().toLowerCase();
+  const domain = trimmed.split("@")[1] || "";
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed) && !RESERVED_EMAIL_DOMAINS.has(domain);
+}
+
 async function logDelivery(row: {
   report_run_id: string;
   user_id?: string | null;
@@ -78,8 +87,22 @@ export async function deliverReport(reportRunId: string): Promise<DeliveryResult
 
   for (const user of users || []) {
     const pref = prefsByUser.get(user.id);
-    const enabled = pref ? pref.email_alerts !== false : true;
-    if (!enabled || !user.email) continue;
+    const enabled = Boolean(pref?.email_alerts);
+    if (!enabled || !isDeliverableEmail(user.email)) {
+      if (enabled && user.email) {
+        result.skipped += 1;
+        await logDelivery({
+          report_run_id: reportRunId,
+          user_id: user.id,
+          channel: "email",
+          recipient: user.email,
+          status: "skipped",
+          error: "Reserved or invalid email recipient",
+          response_meta: { dry_run: dryRun },
+        });
+      }
+      continue;
+    }
     result.attempted += 1;
     const res = await sendEmail(settings, user.email, subject, html, text);
     result[res.status] += 1;
