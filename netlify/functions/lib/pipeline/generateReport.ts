@@ -297,7 +297,11 @@ async function buildScoreDocs(rawRows: Dict[], runDate: string, runId: string): 
   return out;
 }
 
-function selectIdeas(scores: Dict[], snapshots: Dict[], runId: string): { weekly: Dict[]; monthly: Dict[]; excluded: Dict[] } {
+function selectIdeas(
+  scores: Dict[],
+  snapshots: Dict[],
+  runId: string,
+): { weekly: Dict[]; monthly: Dict[]; excluded: Dict[]; relaxed: boolean } {
   const snapMap: Record<string, Dict> = {};
   for (const s of snapshots) snapMap[s.symbol] = s;
 
@@ -342,10 +346,40 @@ function selectIdeas(scores: Dict[], snapshots: Dict[], runId: string): { weekly
     };
   };
 
+  const weekly = weeklyQual.slice(0, 8).map((s) => mk(s, "weekly"));
+  const monthly = monthlyQual.slice(0, 8).map((s) => mk(s, "monthly"));
+
+  if (weekly.length || monthly.length) {
+    return {
+      weekly,
+      monthly,
+      excluded: [],
+      relaxed: false,
+    };
+  }
+
+  const fallback = scores
+    .filter((s) => s._passes_filters && s.direction !== "avoid")
+    .sort((a, b) => {
+      const aScore = (a.conviction ?? 0) + 0.25 * (a.technical ?? 0);
+      const bScore = (b.conviction ?? 0) + 0.25 * (b.technical ?? 0);
+      return bScore - aScore;
+    })
+    .slice(0, 5)
+    .map((s) => {
+      const idea = mk({ ...s, direction: "watch" }, "weekly");
+      idea.reasons = [
+        "Watchlist candidate: strict weekly/monthly thresholds produced no trade ideas",
+        ...idea.reasons,
+      ].slice(0, 6);
+      return idea;
+    });
+
   return {
-    weekly: weeklyQual.slice(0, 8).map((s) => mk(s, "weekly")),
-    monthly: monthlyQual.slice(0, 8).map((s) => mk(s, "monthly")),
+    weekly: fallback,
+    monthly: [],
     excluded: [],
+    relaxed: fallback.length > 0,
   };
 }
 
@@ -501,7 +535,7 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
     const { peBy, pbBy, evBy } = buildSectorPeerArrays(snapshots, universeBySym, infoCache, fmpData);
     const rawRows = computeRawScores(snapshots, macro, infoCache, newsSentiment, universeBySym, sectorBreadth, commoditySector, peBy, pbBy, evBy);
     const scores = await buildScoreDocs(rawRows, runDate, runId);
-    const { weekly, monthly, excluded } = selectIdeas(scores, snapshots, runId);
+    const { weekly, monthly, excluded, relaxed } = selectIdeas(scores, snapshots, runId);
     const stage3Seconds = round((Date.now() - t3) / 1000, 1);
 
     // Rationales + narrative.
@@ -557,6 +591,7 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
       scored: scores.length,
       weekly_ideas: weekly.length,
       monthly_ideas: monthly.length,
+      relaxed_ideas: relaxed,
       excluded_by_earnings: excluded.length,
       kite_gate: Boolean(survivors),
       total_seconds: round((Date.now() - tStart) / 1000, 1),
