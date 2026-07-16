@@ -14,13 +14,17 @@ on:
         type: boolean
         default: false
       universe_limit:
-        description: "Cap the universe to the first N stocks (blank = full)"
+        description: "Cap the universe to the first N stocks (blank = full NSE universe)"
         type: string
-        default: "51"
+        default: ""
+      refresh_instruments:
+        description: "Refresh NSE equity instrument cache before expanding universe"
+        type: boolean
+        default: true
       expand_universe:
         description: "First populate stock_universe from the Kite instrument cache (~2000 NSE EQ)"
         type: boolean
-        default: false
+        default: true
       force:
         description: "Force a run even if today already has a successful report"
         type: boolean
@@ -61,13 +65,45 @@ jobs:
           NETLIFY_SITE_URL: ${{ secrets.NETLIFY_SITE_URL }}
           KITE_REFRESH_SECRET: ${{ secrets.KITE_REFRESH_SECRET }}
 
+      - name: Refresh NSE instrument cache (chunked)
+        if: github.event_name == 'schedule' || inputs.refresh_instruments == true
+        run: |
+          node <<'NODE'
+          const site = process.env.NETLIFY_SITE_URL?.replace(/\/$/, "");
+          const secret = process.env.KITE_REFRESH_SECRET;
+          if (!site || !secret) {
+            throw new Error("NETLIFY_SITE_URL and KITE_REFRESH_SECRET are required");
+          }
+
+          const limit = 1000;
+          let offset = 0;
+          for (let hop = 0; hop < 20; hop++) {
+            const url = `${site}/.netlify/functions/kite-instruments-refresh?exchange=NSE&offset=${offset}&limit=${limit}`;
+            const res = await fetch(url, {
+              method: "POST",
+              headers: { "x-refresh-secret": secret },
+            });
+            const text = await res.text();
+            if (!res.ok) {
+              throw new Error(`NSE instrument refresh failed at offset ${offset}: HTTP ${res.status} ${text}`);
+            }
+            const body = JSON.parse(text);
+            console.log(`instrument-cache: exchange=${body.exchange} offset=${body.offset} upserted=${body.upserted} total=${body.total_filtered} has_more=${body.has_more}`);
+            if (!body.has_more) break;
+            offset += limit;
+          }
+          NODE
+        env:
+          NETLIFY_SITE_URL: ${{ secrets.NETLIFY_SITE_URL }}
+          KITE_REFRESH_SECRET: ${{ secrets.KITE_REFRESH_SECRET }}
+
       - name: Run pipeline
         working-directory: netlify/functions
         run: |
           ARGS=""
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            # Scheduled runs: full configured universe, LLM on.
-            ARGS=""
+            # Scheduled runs: full NSE universe, LLM on.
+            ARGS="--expand-universe"
           else
             [ "${{ inputs.skip_llm }}" = "true" ] && ARGS="$ARGS --skip-llm"
             [ "${{ inputs.expand_universe }}" = "true" ] && ARGS="$ARGS --expand-universe"
