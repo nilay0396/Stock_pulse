@@ -27,6 +27,10 @@ export default async (req: Request): Promise<Response> => {
   // guarded logic internally. Resolve this before enabling the schedule.
   if (!expectedSecret) {
     console.warn("kite-token-refresh: KITE_REFRESH_SECRET not set — endpoint is unauthenticated");
+    return new Response(JSON.stringify({ ok: false, error: "KITE_REFRESH_SECRET is not configured" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   } else if (req.headers.get("x-refresh-secret") !== expectedSecret) {
     return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
       status: 401,

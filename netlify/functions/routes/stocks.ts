@@ -38,6 +38,17 @@ async function safe<T>(label: string, promise: Promise<T>, fallback: T, warnings
   }
 }
 
+async function stockMemoWithFallback(payload: Dict, skipLlm: boolean): Promise<{ text: string; source: "llm" | "fallback"; error?: string }> {
+  const fallback = fallbackStockDeepDiveMemo(payload);
+  if (skipLlm || !llmAvailable()) return { text: fallback, source: "fallback" };
+  try {
+    const text = await withTimeout("ai_memo", generateStockDeepDiveMemo(payload), 15000);
+    return { text: text || fallback, source: text ? "llm" : "fallback", error: text ? undefined : "empty_memo" };
+  } catch (err) {
+    return { text: fallback, source: "fallback", error: errorMessage(err) };
+  }
+}
+
 function chartConfig(inputInterval?: string, inputRange?: string): { interval: ChartInterval; days: number; label: string } {
   const key = (inputInterval || "1d").toLowerCase();
   if (key === "1m" || key === "minute") return { interval: "minute", days: inputRange === "5d" ? 5 : 2, label: "1m" };
@@ -410,9 +421,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
     events,
     fno,
   };
-  const aiSummary = body.skip_llm || !llmAvailable()
-    ? fallbackStockDeepDiveMemo(memoPayload)
-    : await safe("ai_memo", withTimeout("ai_memo", generateStockDeepDiveMemo(memoPayload), 7500), fallbackStockDeepDiveMemo(memoPayload), warnings);
+  const memo = await stockMemoWithFallback(memoPayload, Boolean(body.skip_llm));
 
   return c.json({
     symbol,
@@ -433,7 +442,9 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
     sentiment: { avg_sentiment: 0, items: news.map((n) => ({ title: n.title, sentiment: n.sentiment ?? 0, category: n.category || "other" })) },
     events,
     fno,
-    ai_summary: aiSummary,
+    ai_summary: memo.text,
+    ai_memo_source: memo.source,
+    ai_memo_error: memo.error || null,
     data_warnings: warnings,
     from_cache: false,
   });

@@ -28,6 +28,23 @@ function NavItem({ to, icon: Icon, label, testid }) {
   );
 }
 
+function MobileNavItem({ to, icon: Icon, label, testid }) {
+  const loc = useLocation();
+  const active = loc.pathname === to || (to !== "/" && loc.pathname.startsWith(to));
+  return (
+    <Link
+      to={to}
+      data-testid={`${testid}-mobile`}
+      className="min-w-[64px] flex flex-col items-center justify-center gap-1 px-2 py-2 text-[10px]"
+      style={{ color: active ? "var(--text-primary)" : "var(--text-secondary)" }}
+      aria-label={label}
+    >
+      <Icon size={18} strokeWidth={active ? 2.2 : 1.8} />
+      <span className="truncate max-w-[62px]">{label.replace("Stock ", "").replace("Report ", "")}</span>
+    </Link>
+  );
+}
+
 export default function Layout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -70,11 +87,19 @@ export default function Layout() {
       ],
     }] : []),
   ]), [isAdmin]);
+  const mobileItems = useMemo(() => ([
+    { to: "/", icon: LayoutDashboard, label: "Dashboard", testid: "nav-dashboard" },
+    { to: "/ideas", icon: TrendingUp, label: "Ideas", testid: "nav-ideas" },
+    { to: "/deep-dive", icon: Search, label: "Deep Dive", testid: "nav-deep-dive" },
+    { to: "/reports", icon: FileText, label: "Reports", testid: "nav-history" },
+    { to: "/backtests", icon: BarChart3, label: "Backtests", testid: "nav-backtests" },
+    { to: "/preferences", icon: SettingsIcon, label: "Prefs", testid: "nav-preferences" },
+  ]), []);
 
   return (
-    <div className="min-h-screen flex" style={{ background: "var(--bg)" }}>
+    <div className="min-h-screen flex md:flex-row flex-col" style={{ background: "var(--bg)" }}>
       <aside
-        className="w-[240px] shrink-0 border-r flex flex-col sticky top-0 h-screen"
+        className="hidden md:flex w-[240px] shrink-0 border-r flex-col sticky top-0 h-screen"
         style={{ borderColor: "var(--border)", background: "var(--surface)" }}
       >
         <div className="px-5 py-5 border-b shrink-0" style={{ borderColor: "var(--border)" }}>
@@ -110,12 +135,21 @@ export default function Layout() {
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col min-w-0">
+      <main className="flex-1 flex flex-col min-w-0 pb-16 md:pb-0">
         <TopTicker />
         <div className="flex-1 overflow-x-hidden fade-in">
           <Outlet />
         </div>
       </main>
+      <nav
+        className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t overflow-x-auto"
+        style={{ borderColor: "var(--border)", background: "var(--surface)" }}
+        aria-label="Mobile navigation"
+      >
+        <div className="flex min-w-max justify-around">
+          {mobileItems.map((it) => <MobileNavItem key={it.to} {...it} />)}
+        </div>
+      </nav>
     </div>
   );
 }

@@ -29,5 +29,8 @@
   },
   "scripts": {
     "bundle": "esbuild api.ts kite-token-refresh.ts kite-callback.ts kite-instruments-refresh.ts --bundle --platform=node --format=esm --target=node20 --outdir=../functions-dist --out-extension:.js=.mjs"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.5"
   }
 }

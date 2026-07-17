@@ -36,6 +36,12 @@ function daysBetween(startDate: string): number {
   return Math.max(45, Math.ceil((Date.now() - start) / 86400000) + 45);
 }
 
+function calendarDaysSince(dateOnly: string): number {
+  const start = new Date(`${dateOnly}T00:00:00Z`).getTime();
+  if (!Number.isFinite(start)) return 0;
+  return Math.floor((Date.now() - start) / 86400000);
+}
+
 function signedReturnPct(direction: string, entry: number, exit: number): number {
   if (!entry) return 0;
   const raw = ((exit - entry) / entry) * 100;
@@ -236,6 +242,19 @@ backtestsRoutes.post("/run/:reportRunId", requireAdmin, async (c) => {
     .eq("report_run_id", reportRunId)
     .limit(200);
   if (ideasError) return c.json({ detail: "Failed to load report ideas" }, 500);
+  const requiredDays = Math.max(
+    ENTRY_WINDOW_DAYS + 2,
+    ...(ideas || []).map((idea) => ENTRY_WINDOW_DAYS + (HORIZON_DAYS[idea.horizon || "weekly"] || 7) + 2),
+  );
+  const ageDays = calendarDaysSince(report.run_date);
+  if ((ideas?.length || 0) > 0 && ageDays < requiredDays) {
+    return c.json({
+      detail: `Too early to backtest this report. Run date ${report.run_date} needs about ${requiredDays} calendar days of forward price data; only ${ageDays} days are available.`,
+      run_date: report.run_date,
+      required_days: requiredDays,
+      available_days: ageDays,
+    }, 409);
+  }
 
   const created = await db
     .from("backtest_runs")

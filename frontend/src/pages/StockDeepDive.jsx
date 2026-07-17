@@ -537,6 +537,7 @@ export default function StockDeepDive() {
     if (data?.symbol) runFetch(data.symbol, { force: true, interval, keepTab: true });
   };
   const liveIntervalEnabled = ["1m", "5m", "15m", "1h"].includes(chartInterval);
+  const visibleWarnings = (data?.data_warnings || []).filter((w) => w.source !== "ai_memo");
 
   useEffect(() => {
     if (!liveChart || !liveIntervalEnabled || tab !== "chart" || !data?.symbol) return undefined;
@@ -612,13 +613,13 @@ export default function StockDeepDive() {
             </div>
           </div>
 
-          {!!data.data_warnings?.length && (
+          {!!visibleWarnings.length && (
             <div className="panel-elevated p-3 text-[12px] flex items-start gap-2" style={{ color: "var(--text-muted)" }} data-testid="deepdive-data-warnings">
               <AlertTriangle size={14} style={{ color: "#fbbf24", marginTop: 2 }} />
               <div>
                 <div style={{ color: "var(--text-primary)" }}>Partial data loaded successfully.</div>
                 <div className="font-mono text-[11px] mt-1">
-                  Unavailable: {data.data_warnings.map((w) => w.source).filter(Boolean).join(", ")}
+                  Unavailable: {visibleWarnings.map((w) => w.source).filter(Boolean).join(", ")}
                 </div>
               </div>
             </div>

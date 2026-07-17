@@ -1,6 +1,7 @@
 import { db } from "./db.js";
 
 export type SystemSettings = Record<string, unknown>;
+export const MASKED_SECRET = "********";
 
 export const SETTINGS_DEFAULTS: SystemSettings = {
   telegram_bot_token: "",
@@ -20,6 +21,14 @@ export const SETTINGS_DEFAULTS: SystemSettings = {
 };
 
 export const SETTINGS_KEYS = new Set(Object.keys(SETTINGS_DEFAULTS));
+export const SECRET_SETTING_KEYS = new Set([
+  "telegram_bot_token",
+  "gmail_app_password",
+  "fmp_api_key",
+  "fred_api_key",
+  "UPSTOX_ACCESS_TOKEN",
+  "FYERS_ACCESS_TOKEN",
+]);
 
 function unwrapSettingValue(value: unknown): unknown {
   return value;
@@ -44,9 +53,18 @@ export async function loadSystemSettings(): Promise<SystemSettings> {
   return settings;
 }
 
+export function publicSystemSettings(settings: SystemSettings): SystemSettings {
+  const out: SystemSettings = { ...settings };
+  for (const key of SECRET_SETTING_KEYS) {
+    const value = out[key];
+    out[key] = typeof value === "string" && value.length > 0 ? MASKED_SECRET : "";
+  }
+  return out;
+}
+
 export async function saveSystemSettings(input: SystemSettings): Promise<SystemSettings> {
   const rows = Object.entries(input)
-    .filter(([key]) => SETTINGS_KEYS.has(key))
+    .filter(([key, value]) => SETTINGS_KEYS.has(key) && !(SECRET_SETTING_KEYS.has(key) && value === MASKED_SECRET))
     .map(([key, value]) => ({ key, value, updated_at: new Date().toISOString() }));
 
   if (rows.length) {

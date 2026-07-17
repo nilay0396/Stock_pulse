@@ -3,9 +3,16 @@ import jwt from "jsonwebtoken";
 import type { Context, Next } from "hono";
 import { db } from "./db.js";
 
-const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
+const JWT_SECRET = process.env.JWT_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const JWT_ALGORITHM = (process.env.JWT_ALGORITHM || "HS256") as jwt.Algorithm;
 const JWT_EXPIRE_HOURS = Number(process.env.JWT_EXPIRE_HOURS || "168");
+
+function jwtSecret(): string {
+  if (!JWT_SECRET) {
+    throw new Error("JWT_SECRET or SUPABASE_SERVICE_ROLE_KEY must be set");
+  }
+  return JWT_SECRET;
+}
 
 export interface PublicUser {
   id: string;
@@ -28,14 +35,14 @@ export async function verifyPassword(password: string, hashed: string): Promise<
 }
 
 export function createToken(userId: string, role: string): string {
-  return jwt.sign({ sub: userId, role }, JWT_SECRET, {
+  return jwt.sign({ sub: userId, role }, jwtSecret(), {
     algorithm: JWT_ALGORITHM,
     expiresIn: `${JWT_EXPIRE_HOURS}h`,
   });
 }
 
 export function decodeToken(token: string): jwt.JwtPayload {
-  return jwt.verify(token, JWT_SECRET, { algorithms: [JWT_ALGORITHM] }) as jwt.JwtPayload;
+  return jwt.verify(token, jwtSecret(), { algorithms: [JWT_ALGORITHM] }) as jwt.JwtPayload;
 }
 
 /** ≥1 letter AND ≥1 digit-or-symbol. Length is enforced by the caller (8-72). */

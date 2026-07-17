@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../lib/db.js";
 import { requireAdmin, type PublicUser } from "../lib/auth.js";
-import { asNumber, loadSystemSettings, saveSystemSettings } from "../lib/settings.js";
+import { asNumber, loadSystemSettings, publicSystemSettings, saveSystemSettings } from "../lib/settings.js";
 import { discoverTelegramChats, getTelegramBotInfo, sendTelegram } from "../lib/delivery/telegram.js";
 import { renderReportEmail, renderReportText, sendEmail } from "../lib/delivery/email.js";
 import { expandUniverseFromKite } from "../lib/pipeline/universe.js";
@@ -10,12 +10,12 @@ type Variables = { user: PublicUser };
 export const adminRoutes = new Hono<{ Variables: Variables }>();
 
 adminRoutes.get("/settings", requireAdmin, async (c) => {
-  return c.json(await loadSystemSettings());
+  return c.json(publicSystemSettings(await loadSystemSettings()));
 });
 
 adminRoutes.put("/settings", requireAdmin, async (c) => {
   const body = await c.req.json<Record<string, unknown>>();
-  return c.json(await saveSystemSettings(body));
+  return c.json(publicSystemSettings(await saveSystemSettings(body)));
 });
 
 adminRoutes.get("/scheduler", requireAdmin, async (c) => {
