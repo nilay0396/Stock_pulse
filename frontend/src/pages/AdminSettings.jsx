@@ -50,7 +50,7 @@ export default function AdminSettings() {
     catch (e) { toast.error(e?.response?.data?.detail || "Test failed"); }
   };
   const runReport = async () => {
-    try { await api.post("/reports/run"); toast.success("Report generation started (~60–120s)"); }
+    try { await api.post("/reports/run"); toast.success("GitHub Actions workflow queued"); }
     catch (e) { toast.error(e?.response?.data?.detail || "Trigger failed"); }
   };
 

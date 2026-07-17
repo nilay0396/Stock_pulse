@@ -30,8 +30,8 @@ export default function Dashboard() {
     const startedAtLatest = latest?.id || null;
     try {
       await api.post("/reports/run");
-      toast.info("Engine started — polling every 10s…", { duration: 4000 });
-      const deadline = Date.now() + 4 * 60 * 1000;
+      toast.info("GitHub workflow queued - polling every 15s...", { duration: 5000 });
+      const deadline = Date.now() + 15 * 60 * 1000;
       const tick = async () => {
         try {
           const { data } = await api.get("/reports/latest");
@@ -52,10 +52,10 @@ export default function Dashboard() {
             return;
           }
         } catch (err) { console.debug("[dashboard] poll transient error", err); }
-        if (Date.now() < deadline) setTimeout(tick, 10000);
+        if (Date.now() < deadline) setTimeout(tick, 15000);
         else { toast.warning("Still running — check Report History shortly."); setGenerating(false); refreshAll(); }
       };
-      setTimeout(tick, 10000);
+      setTimeout(tick, 15000);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to trigger report");
       setGenerating(false);

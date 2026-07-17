@@ -1,9 +1,73 @@
 import { Hono } from "hono";
 import { db } from "../lib/db.js";
-import { requireUser, type PublicUser } from "../lib/auth.js";
+import { requireAdmin, requireUser, type PublicUser } from "../lib/auth.js";
 
 type Variables = { user: PublicUser };
 export const reportsRoutes = new Hono<{ Variables: Variables }>();
+
+function githubWorkflowConfig(): {
+  token: string;
+  owner: string;
+  repo: string;
+  workflow: string;
+  ref: string;
+} {
+  return {
+    token: process.env.GITHUB_WORKFLOW_TOKEN || process.env.GH_WORKFLOW_TOKEN || "",
+    owner: process.env.GITHUB_WORKFLOW_OWNER || "nilay0396",
+    repo: process.env.GITHUB_WORKFLOW_REPO || "Stock_pulse",
+    workflow: process.env.GITHUB_WORKFLOW_FILE || "daily-report.yml",
+    ref: process.env.GITHUB_WORKFLOW_REF || "main",
+  };
+}
+
+// POST /reports/run
+// Dispatches the long-running report pipeline through GitHub Actions. Running
+// it in-process would exceed Netlify's normal function timeout.
+reportsRoutes.post("/run", requireAdmin, async (c) => {
+  const cfg = githubWorkflowConfig();
+  if (!cfg.token) {
+    return c.json({
+      detail: "GitHub workflow dispatch is not configured. Add GITHUB_WORKFLOW_TOKEN in Netlify env vars.",
+    }, 500);
+  }
+
+  const body = (await c.req.json<Record<string, unknown>>().catch(() => ({}))) as Record<string, unknown>;
+  const inputs = {
+    skip_llm: String(Boolean(body.skip_llm ?? false)),
+    universe_limit: String(body.universe_limit || ""),
+    refresh_instruments: String(Boolean(body.refresh_instruments ?? true)),
+    expand_universe: String(Boolean(body.expand_universe ?? true)),
+    force: String(Boolean(body.force ?? true)),
+    skip_delivery: String(Boolean(body.skip_delivery ?? false)),
+  };
+
+  const url = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/actions/workflows/${encodeURIComponent(cfg.workflow)}/dispatches`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${cfg.token}`,
+      "content-type": "application/json",
+      "user-agent": "market-pulse-india",
+      "x-github-api-version": "2022-11-28",
+    },
+    body: JSON.stringify({ ref: cfg.ref, inputs }),
+  });
+
+  if (res.status !== 204) {
+    const text = await res.text().catch(() => "");
+    return c.json({ detail: `GitHub workflow dispatch failed: HTTP ${res.status}${text ? ` ${text}` : ""}` }, 502);
+  }
+
+  return c.json({
+    status: "queued",
+    provider: "github-actions",
+    workflow: cfg.workflow,
+    ref: cfg.ref,
+    inputs,
+  }, 202);
+});
 
 // GET /reports/history?limit=20
 reportsRoutes.get("/history", requireUser, async (c) => {
