@@ -1,10 +1,63 @@
 import { useParams, Link } from "react-router-dom";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from "recharts";
 import api from "../lib/api";
 import { useCached } from "../lib/cache";
 import { fmtNum, fmtPct, pctColor, fmtRupee, directionBadge, fmtDate } from "../lib/fmt";
 import ConvictionBar from "../components/ConvictionBar";
 import { ShimmerLine, SkeletonList, SkeletonParagraph } from "../components/SkeletonBits";
+
+function CandlestickChart({ candles, sma50, sma200 }) {
+  const rows = (candles || []).filter((c) => c.close != null && c.high != null && c.low != null);
+  if (rows.length < 2) return null;
+  const prices = rows
+    .flatMap((c) => [c.high, c.low, c.open ?? c.close, c.close, sma50, sma200])
+    .filter((v) => v != null && Number.isFinite(Number(v)))
+    .map(Number);
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const range = max - min || 1;
+  const w = 920;
+  const h = 280;
+  const pad = 12;
+  const stepX = w / rows.length;
+  const bodyW = Math.max(1.5, Math.min(9, stepX * 0.58));
+  const y = (p) => pad + (h - pad * 2) - ((Number(p) - min) / range) * (h - pad * 2);
+
+  return (
+    <svg viewBox={`0 0 ${w} ${h + 24}`} preserveAspectRatio="none" style={{ width: "100%", height: "100%" }} data-testid="stock-candlestick-chart">
+      {[0.25, 0.5, 0.75].map((g) => (
+        <line key={g} x1="0" x2={w} y1={pad + g * (h - pad * 2)} y2={pad + g * (h - pad * 2)}
+              stroke="var(--border)" strokeDasharray="2 6" strokeWidth="1" />
+      ))}
+      {sma50 && <line x1="0" x2={w} y1={y(sma50)} y2={y(sma50)} stroke="#D97706" strokeDasharray="4 4" strokeWidth="1" />}
+      {sma200 && <line x1="0" x2={w} y1={y(sma200)} y2={y(sma200)} stroke="#00A36C" strokeDasharray="4 4" strokeWidth="1" />}
+      {rows.map((c, i) => {
+        const x = i * stepX + stepX / 2;
+        const open = c.open ?? c.close;
+        const green = c.close >= open;
+        const color = green ? "#4ade80" : "#f87171";
+        const yOpen = y(open);
+        const yClose = y(c.close);
+        return (
+          <g key={`${c.date}-${i}`}>
+            <line x1={x} x2={x} y1={y(c.high)} y2={y(c.low)} stroke={color} strokeWidth="1" />
+            <rect
+              x={x - bodyW / 2}
+              y={Math.min(yOpen, yClose)}
+              width={bodyW}
+              height={Math.max(1, Math.abs(yOpen - yClose))}
+              fill={green ? "rgba(74,222,128,0.72)" : "rgba(248,113,113,0.78)"}
+              stroke={color}
+              strokeWidth="0.6"
+            />
+          </g>
+        );
+      })}
+      <text x="6" y={h + 16} fontSize="10" fontFamily="monospace" fill="var(--text-muted)">
+        {rows[0].date} to {rows[rows.length - 1].date} · {fmtRupee(min)} to {fmtRupee(max)}
+      </text>
+    </svg>
+  );
+}
 
 export default function StockDetail() {
   const { symbol } = useParams();
@@ -67,24 +120,18 @@ export default function StockDetail() {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <section className="panel p-4 lg:col-span-8" data-testid="stock-chart">
-          <div className="overline mb-2">Price · 6 Months</div>
+          <div className="overline mb-2">Candlestick Price · 6 Months</div>
           <div style={{ height: 320 }}>
             {showHistSk ? (
               <ShimmerLine w="100%" h={320} />
             ) : candles.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={candles.map((c) => ({ ...c, date: c.date }))}>
-                  <CartesianGrid stroke="#1F1F24" strokeDasharray="2 4" />
-                  <XAxis dataKey="date" stroke="#71717A" fontSize={10} minTickGap={40} />
-                  <YAxis stroke="#71717A" fontSize={10} domain={["auto", "auto"]} width={60} />
-                  <Tooltip contentStyle={{ background: "#0C0C0E", border: "1px solid #1F1F24", fontFamily: "JetBrains Mono", fontSize: 12 }}
-                           labelStyle={{ color: "#A1A1AA" }} itemStyle={{ color: "#F4F4F5" }} />
-                  {t.sma_50 && <ReferenceLine y={t.sma_50} stroke="#D97706" strokeDasharray="3 3" label={{ value: "SMA50", fontSize: 10, fill: "#D97706" }} />}
-                  {t.sma_200 && <ReferenceLine y={t.sma_200} stroke="#00A36C" strokeDasharray="3 3" label={{ value: "SMA200", fontSize: 10, fill: "#00A36C" }} />}
-                  <Line type="monotone" dataKey="close" stroke="#E4E4E7" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
+              <CandlestickChart candles={candles} sma50={t.sma_50} sma200={t.sma_200} />
             ) : <div className="h-full flex items-center justify-center text-[12px]" style={{ color: "var(--text-muted)" }}>No history</div>}
+          </div>
+          <div className="mt-2 flex gap-4 text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
+            <span style={{ color: "#D97706" }}>SMA50</span>
+            <span style={{ color: "#00A36C" }}>SMA200</span>
+            <span>Source: {(histResp?.source || "unknown").toUpperCase()}</span>
           </div>
         </section>
 

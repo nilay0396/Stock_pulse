@@ -142,7 +142,7 @@ export default function Dashboard() {
           </section>
 
           <div className="lg:col-span-12">
-            <FunnelWidget funnel={latest?.summary?.funnel || latest?.funnel} />
+            <FunnelWidget funnel={latest?.summary?.funnel || latest?.funnel} reportId={latest?.id} />
           </div>
 
           <section className="panel p-5 lg:col-span-8" data-testid="report-narrative">
