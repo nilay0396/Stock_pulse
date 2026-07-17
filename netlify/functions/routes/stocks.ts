@@ -22,7 +22,33 @@ function chartConfig(inputInterval?: string, inputRange?: string): { interval: C
   if (key === "5m" || key === "5minute") return { interval: "5minute", days: inputRange === "30d" ? 30 : 10, label: "5m" };
   if (key === "15m" || key === "15minute") return { interval: "15minute", days: inputRange === "60d" ? 60 : 30, label: "15m" };
   if (key === "1h" || key === "60minute") return { interval: "60minute", days: inputRange === "180d" ? 180 : 90, label: "1h" };
+  if (key === "1mo" || key === "1month" || key === "month") return { interval: "day", days: inputRange === "10y" ? 3650 : 1825, label: "1mo" };
   return { interval: "day", days: inputRange === "1y" ? 370 : inputRange === "3mo" ? 110 : 190, label: "1d" };
+}
+
+function aggregateMonthlyCandles(candles: Dict[]): Dict[] {
+  const monthly = new Map<string, Dict>();
+  for (const candle of candles) {
+    if (!candle?.date || candle.close == null || candle.high == null || candle.low == null) continue;
+    const month = String(candle.date).slice(0, 7);
+    const existing = monthly.get(month);
+    if (!existing) {
+      monthly.set(month, {
+        date: month,
+        open: candle.open ?? candle.close,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume ?? 0,
+      });
+      continue;
+    }
+    existing.high = Math.max(Number(existing.high), Number(candle.high));
+    existing.low = Math.min(Number(existing.low), Number(candle.low));
+    existing.close = candle.close;
+    existing.volume = Number(existing.volume || 0) + Number(candle.volume || 0);
+  }
+  return Array.from(monthly.values());
 }
 
 function verdictFor(score: Dict | null, horizon: "weekly" | "monthly"): "buy" | "hold" | "sell" | "avoid" {
@@ -274,6 +300,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
   const symbol = (c.req.param("symbol") || "").toUpperCase();
   const body = (await c.req.json().catch(() => ({}))) as Dict;
   const cfg = chartConfig(body.interval, body.range);
+  const aggregateMonthly = cfg.label === "1mo";
   const { data: universe, error: universeError } = await db
     .from("stock_universe")
     .select("*")
@@ -292,7 +319,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
     stockFno(symbol),
   ]);
 
-  const ohlc = ohlcResult.candles;
+  const ohlc = aggregateMonthly ? aggregateMonthlyCandles(ohlcResult.candles) : ohlcResult.candles;
   const computedSnapshot = ohlc.length ? computeSnapshot(ohlc.map((b) => ({
     close: b.close,
     high: b.high,
@@ -329,7 +356,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
     market_cap_tier: universe.market_cap_tier,
     ohlc,
     chart_source: ohlcResult.source,
-    chart_interval: ohlcResult.interval,
+    chart_interval: aggregateMonthly ? "month" : ohlcResult.interval,
     chart_label: cfg.label,
     technicals,
     fundamentals,
@@ -363,6 +390,13 @@ stocksRoutes.get("/:symbol/history", requireUser, async (c) => {
   const symbol = (c.req.param("symbol") || "").toUpperCase();
   const period = c.req.query("period") || "6mo";
   const cfg = chartConfig(c.req.query("interval"), period);
+  const aggregateMonthly = cfg.label === "1mo";
   const { candles, source, interval } = await stockOhlc(symbol, cfg.days, cfg.interval);
-  return c.json({ symbol, candles, source, interval, label: cfg.label });
+  return c.json({
+    symbol,
+    candles: aggregateMonthly ? aggregateMonthlyCandles(candles) : candles,
+    source,
+    interval: aggregateMonthly ? "month" : interval,
+    label: cfg.label,
+  });
 });

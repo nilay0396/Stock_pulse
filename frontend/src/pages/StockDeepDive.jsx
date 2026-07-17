@@ -504,19 +504,27 @@ export default function StockDeepDive() {
   const [tab, setTab] = useState("overview");
   const [withAI, setWithAI] = useState(true);
   const [chartInterval, setChartInterval] = useState("1d");
+  const [liveChart, setLiveChart] = useState(true);
 
   const runFetch = async (sym, opts = {}) => {
     if (!sym) return;
-    setLoading(true); setError(null);
+    if (!opts.silent) setLoading(true);
+    setError(null);
     try {
       const { data } = await api.post(`/stocks/${sym}/deep-dive`,
-        { skip_llm: !withAI, force_refresh: !!opts.force, interval: opts.interval || chartInterval });
+        { skip_llm: opts.skipAI ? true : !withAI, force_refresh: !!opts.force, interval: opts.interval || chartInterval });
       setData(data);
       if (!opts.keepTab) setTab("overview");
     } catch (e) {
-      setError(e?.response?.data?.detail || "Fetch failed");
-      toast.error(e?.response?.data?.detail || "Deep dive failed");
-    } finally { setLoading(false); }
+      if (!opts.silent) {
+        setError(e?.response?.data?.detail || "Fetch failed");
+        toast.error(e?.response?.data?.detail || "Deep dive failed");
+      } else {
+        console.warn("Live chart refresh failed", e);
+      }
+    } finally {
+      if (!opts.silent) setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -529,6 +537,16 @@ export default function StockDeepDive() {
     setChartInterval(interval);
     if (data?.symbol) runFetch(data.symbol, { force: true, interval, keepTab: true });
   };
+  const liveIntervalEnabled = ["1m", "5m", "15m", "1h"].includes(chartInterval);
+
+  useEffect(() => {
+    if (!liveChart || !liveIntervalEnabled || tab !== "chart" || !data?.symbol) return undefined;
+    const timer = setInterval(() => {
+      runFetch(data.symbol, { force: true, interval: chartInterval, keepTab: true, skipAI: true, silent: true });
+    }, 15000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveChart, liveIntervalEnabled, tab, data?.symbol, chartInterval]);
 
   return (
     <div className="px-6 py-6 flex flex-col gap-5" data-testid="stock-deep-dive-page">
@@ -605,8 +623,19 @@ export default function StockDeepDive() {
                   <div className="text-[10px] font-mono" style={{ color: "var(--text-muted)" }}>
                     Chart source: {(data.chart_source || "unknown").toUpperCase()} · Interval: {(data.chart_label || chartInterval).toUpperCase()}
                   </div>
-                  <div className="flex gap-1" data-testid="chart-intervals">
-                    {["1m", "5m", "15m", "1h", "1d"].map((it) => (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <label className="flex items-center gap-1 text-[10px] font-mono" style={{ color: "var(--text-muted)", opacity: liveIntervalEnabled ? 1 : 0.55 }}>
+                      <input
+                        type="checkbox"
+                        checked={liveChart}
+                        disabled={!liveIntervalEnabled}
+                        onChange={(e) => setLiveChart(e.target.checked)}
+                        data-testid="chart-live-toggle"
+                      />
+                      Live 15s
+                    </label>
+                    <div className="flex gap-1" data-testid="chart-intervals">
+                    {["1m", "5m", "15m", "1h", "1d", "1mo"].map((it) => (
                       <button
                         key={it}
                         className="font-mono text-[11px] px-2 py-1 rounded-sm border"
@@ -621,6 +650,7 @@ export default function StockDeepDive() {
                         {it}
                       </button>
                     ))}
+                    </div>
                   </div>
                 </div>
                 <PriceChart ohlc={data.ohlc} />
