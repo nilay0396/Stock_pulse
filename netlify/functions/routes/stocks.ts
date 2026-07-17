@@ -73,6 +73,41 @@ function aggregateMonthlyCandles(candles: Dict[]): Dict[] {
   return Array.from(monthly.values());
 }
 
+function isSearchableEquity(row: Dict): boolean {
+  const symbol = String(row.symbol || "").toUpperCase();
+  const name = String(row.name || "").toUpperCase();
+  if (!symbol || /^\d/.test(symbol)) return false;
+  if (symbol.includes("-")) return false;
+  const blockedNameTokens = [
+    " ETF",
+    "ETF ",
+    "BEES",
+    "LIQUID",
+    "GILT",
+    "SDL",
+    "TBILL",
+    "TREASURY",
+    "INVIT",
+    "REIT",
+    "BOND",
+    "NCD",
+    "DEBENTURE",
+  ];
+  return !blockedNameTokens.some((token) => name.includes(token));
+}
+
+function searchRank(row: Dict, needle: string): number {
+  const q = needle.toUpperCase();
+  const symbol = String(row.symbol || "").toUpperCase();
+  const name = String(row.name || "").toUpperCase();
+  if (symbol === q) return 0;
+  if (symbol.startsWith(q)) return 1;
+  if (name.startsWith(q)) return 2;
+  if (symbol.includes(q)) return 3;
+  if (name.includes(q)) return 4;
+  return 9;
+}
+
 function verdictFor(score: Dict | null, horizon: "weekly" | "monthly"): "buy" | "hold" | "sell" | "avoid" {
   if (!score) return "hold";
   if (score.direction === "avoid") return "avoid";
@@ -192,9 +227,17 @@ stocksRoutes.get("/search", requireUser, async (c) => {
     .select("symbol,yf_symbol,name,sector,industry,market_cap_tier")
     .or(`symbol.ilike.%${needle}%,name.ilike.%${needle}%`)
     .order("symbol", { ascending: true })
-    .limit(limit);
+    .limit(Math.max(100, limit * 10));
   if (error) return c.json({ detail: "Failed to search stocks" }, 500);
-  return c.json(data || []);
+  const rows = (data || [])
+    .filter(isSearchableEquity)
+    .sort((a, b) => {
+      const rank = searchRank(a, needle) - searchRank(b, needle);
+      if (rank !== 0) return rank;
+      return String(a.symbol).localeCompare(String(b.symbol));
+    })
+    .slice(0, limit);
+  return c.json(rows);
 });
 
 async function latestScore(symbol: string): Promise<Dict | null> {
