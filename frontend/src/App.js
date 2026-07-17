@@ -17,6 +17,7 @@ import News from "./pages/News";
 import ReportHistory from "./pages/ReportHistory";
 import ReportPreview from "./pages/ReportPreview";
 import DeliveryLogs from "./pages/DeliveryLogs";
+import Backtests from "./pages/Backtests";
 import Preferences from "./pages/Preferences";
 import AdminConnectors from "./pages/AdminConnectors";
 import AdminSettings from "./pages/AdminSettings";
@@ -45,6 +46,7 @@ function App() {
             <Route path="/history" element={<ReportHistory />} />
             <Route path="/reports/:runId" element={<ReportPreview />} />
             <Route path="/deliveries" element={<DeliveryLogs />} />
+            <Route path="/backtests" element={<Backtests />} />
             <Route path="/preferences" element={<Preferences />} />
 
             <Route path="/admin/connectors" element={<ProtectedRoute adminOnly><AdminConnectors /></ProtectedRoute>} />

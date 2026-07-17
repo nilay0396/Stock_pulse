@@ -50,6 +50,7 @@ export default function Layout() {
       title: "Reports",
       items: [
         { to: "/reports", icon: FileText, label: "Report History", testid: "nav-history" },
+        { to: "/backtests", icon: BarChart3, label: "Backtests", testid: "nav-backtests" },
         { to: "/deliveries", icon: Send, label: "Delivery Logs", testid: "nav-deliveries" },
       ],
     },

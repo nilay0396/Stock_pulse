@@ -1,5 +1,9 @@
 # Market Pulse India
 
+> **Current live stack:** `frontend/` + `netlify/functions/` + `supabase/migrations/`
+> + `.github/workflows/`. The old Python/FastAPI/Mongo implementation has been
+> moved to `legacy/python-fastapi/` for reference only and is not deployed.
+
 An institutional-grade AI market intelligence and trade-idea platform for Indian equities. It
 continuously ingests global macro, Indian indices, stock OHLCV, company fundamentals, news and
 analyst sentiment, runs a multi-factor scoring engine, and produces a daily morning brief
