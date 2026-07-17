@@ -197,11 +197,11 @@ export async function generateStockDeepDiveMemo(payload: Dict): Promise<string> 
       "Use only the supplied JSON data. Be specific, concise, and practical. " +
       "Do not invent unavailable F&O, news, fundamentals, earnings, or ownership data. " +
       "Structure the memo with: Verdict, Technical Setup, Fundamentals, News/Events, F&O, Risks, Action Plan. " +
-      "Use rupee symbol ₹. No hype, no emojis, no disclaimers.";
+      "Keep it compact enough for a trading decision. Use rupee symbol ₹. No hype, no emojis, no disclaimers.";
     const prompt =
       "Write a complete but compact deep-dive for this NSE stock using ONLY this data:\n\n" +
-      JSON.stringify(payload).slice(0, 12000);
-    return (await complete(NARRATIVE_MODEL, system, prompt, 1800)).trim();
+      JSON.stringify(payload).slice(0, 9000);
+    return (await complete(NARRATIVE_MODEL, system, prompt, 1100)).trim();
   } catch (err) {
     console.warn(`Deep dive memo failed for ${payload.symbol}:`, err instanceof Error ? err.message : err);
     return fallbackStockDeepDiveMemo(payload);

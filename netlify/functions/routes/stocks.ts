@@ -376,13 +376,13 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
   if (!universe) return c.json({ detail: "Stock not found" }, 404);
 
   const [ohlcResult, fundamentalsMap, storedSnapshot, score, news, events, fno] = await Promise.all([
-    safe("ohlc", withTimeout("ohlc", stockOhlc(symbol, cfg.days, cfg.interval), 4500), { candles: [], source: "none", interval: cfg.interval } as { candles: Dict[]; source: "kite" | "yahoo" | "none"; interval: ChartInterval }, warnings),
-    safe("fundamentals", withTimeout("fundamentals", fetchQuoteSummaryInfo([symbol]), 3000), {} as Record<string, Record<string, any>>, warnings),
+    safe("ohlc", withTimeout("ohlc", stockOhlc(symbol, cfg.days, cfg.interval), 3500), { candles: [], source: "none", interval: cfg.interval } as { candles: Dict[]; source: "kite" | "yahoo" | "none"; interval: ChartInterval }, warnings),
+    safe("fundamentals", withTimeout("fundamentals", fetchQuoteSummaryInfo([symbol]), 2200), {} as Record<string, Record<string, any>>, warnings),
     safe("stored_snapshot", latestSnapshot(symbol), null, warnings),
     safe("score", latestScore(symbol), null, warnings),
-    safe("news", withTimeout("news", stockNews(symbol, 25, universe), 3000), [] as Dict[], warnings),
-    safe("events", withTimeout("events", stockEvents(symbol), 2000), { next_earnings: null, announcements: [], actions: [] }, warnings),
-    safe("fno", withTimeout("fno", stockFno(symbol), 2500), { eligible: false, source: "none", providers_tried: [{ provider: "kite", error: "Timed out or unavailable" }] }, warnings),
+    safe("news", withTimeout("news", stockNews(symbol, 25, universe), 2200), [] as Dict[], warnings),
+    safe("events", withTimeout("events", stockEvents(symbol), 1500), { next_earnings: null, announcements: [], actions: [] }, warnings),
+    safe("fno", withTimeout("fno", stockFno(symbol), 1800), { eligible: false, source: "none", providers_tried: [{ provider: "kite", error: "Timed out or unavailable" }] }, warnings),
   ]);
 
   const ohlc = aggregateMonthly ? aggregateMonthlyCandles(ohlcResult.candles) : ohlcResult.candles;
@@ -412,7 +412,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
   };
   const aiSummary = body.skip_llm || !llmAvailable()
     ? fallbackStockDeepDiveMemo(memoPayload)
-    : await safe("ai_memo", withTimeout("ai_memo", generateStockDeepDiveMemo(memoPayload), 2500), fallbackStockDeepDiveMemo(memoPayload), warnings);
+    : await safe("ai_memo", withTimeout("ai_memo", generateStockDeepDiveMemo(memoPayload), 7500), fallbackStockDeepDiveMemo(memoPayload), warnings);
 
   return c.json({
     symbol,
