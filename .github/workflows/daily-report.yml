@@ -1,12 +1,13 @@
 name: Daily Report Pipeline
 
 # Runs the Market Pulse report-generation pipeline outside Netlify's function
-# timeout. ~07:00 IST on weekdays, plus manual dispatch. See
+# timeout. 09:00 and 13:00 IST daily, plus manual dispatch. See
 # netlify/functions/pipeline/run.ts.
 on:
   schedule:
-    # 01:30 UTC = 07:00 IST (no DST). Mon–Fri.
-    - cron: "30 1 * * 1-5"
+    # 03:30 UTC = 09:00 IST, 07:30 UTC = 13:00 IST (no DST).
+    - cron: "30 3 * * *"
+    - cron: "30 7 * * *"
   workflow_dispatch:
     inputs:
       skip_llm:
@@ -106,8 +107,9 @@ jobs:
         run: |
           ARGS=""
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            # Scheduled runs: full NSE universe, LLM on.
-            ARGS="--expand-universe"
+            # Scheduled runs: full NSE universe, LLM on, delivery on.
+            # Force allows both scheduled runs on the same date.
+            ARGS="--expand-universe --force"
           else
             [ "${{ inputs.skip_llm }}" = "true" ] && ARGS="$ARGS --skip-llm"
             [ "${{ inputs.skip_delivery }}" = "true" ] && ARGS="$ARGS --skip-delivery"
