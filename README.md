@@ -5,8 +5,8 @@ continuously ingests global macro, Indian indices, stock OHLCV, company fundamen
 analyst sentiment, runs a multi-factor scoring engine, and produces a daily morning brief
 (07:00 IST) delivered via Telegram + Gmail.
 
-> This repo runs as-is inside the Emergent preview pod (React + FastAPI + MongoDB, APScheduler).
-> Dockerfiles and `docker-compose.yml` are shipped under `/app/deploy/` for later self-hosting.
+> Live deployment currently runs on Netlify Functions + Supabase, with GitHub Actions
+> running the daily report pipeline at 07:00 IST on weekdays.
 
 ## Architecture
 
@@ -22,7 +22,7 @@ frontend (React, CRA)                   backend (FastAPI)
            Users / Audit)           │   services/
                                     │     indicators  RSI / SMA / EMA / MACD / BB / ATR
                                     │     scoring     7 weighted factors → conviction
-                                    │     sentiment   Claude Sonnet 4.5 (Emergent LLM key)
+                                    │     sentiment   Anthropic Claude narrative + scoring helpers
                                     │     report      orchestration pipeline
                                     │     delivery_*  Telegram + Gmail SMTP (dry-run-safe)
                                     │     settings    runtime config (editable via Admin UI)
@@ -62,7 +62,7 @@ Backend (`/app/backend/.env`):
 | `MONGO_URL` | Mongo connection string (preset to local) |
 | `DB_NAME` | Mongo database name |
 | `CORS_ORIGINS` | Comma-separated allow-list |
-| `EMERGENT_LLM_KEY` | Emergent Universal Key, used for Claude Sonnet 4.5 |
+| `ANTHROPIC_API_KEY` | Anthropic key used for report narrative and AI analysis |
 | `JWT_SECRET`, `JWT_ALGORITHM`, `JWT_EXPIRE_HOURS` | Token signing |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Seeded on first run |
 | `REPORT_CRON_HOUR`, `REPORT_CRON_MINUTE` | Defaults for daily schedule |
@@ -74,8 +74,9 @@ Runtime config lives in the **`system_settings`** Mongo collection and can be ed
 - `gmail_address`, `gmail_app_password`, `gmail_from_name`, `smtp_host`, `smtp_port`
 - `report_hour`, `report_minute`, `dry_run`
 
-Until a Telegram token or Gmail app-password is set, deliveries are silently recorded
-in **dry-run** mode (visible in the Delivery Logs page).
+Telegram and Gmail delivery are wired and live once credentials are saved in
+**Admin -> Settings** and dry-run is disabled. Delivery attempts are recorded in
+the Delivery Logs page; admins see all deliveries, users see their own delivery history.
 
 ## Data sources (connector registry)
 
@@ -165,9 +166,9 @@ Nginx proxies `/api/*` → backend and serves the React build from root.
 
 | Area | Status | What's needed |
 |---|---|---|
-| Telegram delivery | **config-pending** | Bot token from @BotFather, chat IDs per user |
-| Gmail delivery   | **config-pending** | Gmail account + 16-char App Password (2FA enabled) |
-| LLM (sentiment + narrative) | **wired** | `EMERGENT_LLM_KEY` (already set) |
+| Telegram delivery | **wired/live** | Bot token from @BotFather, chat IDs per user |
+| Gmail delivery   | **wired/live** | Gmail account + 16-char App Password (2FA enabled) |
+| LLM (sentiment + narrative) | **wired** | `ANTHROPIC_API_KEY` |
 | Official NSE snapshot feeds | **not wired** | Paid license. `yfinance` used as free fallback. |
 | Analyst consensus (fine-grained) | **not wired** | Refinitiv / Bloomberg / Tickertape API |
 | Corporate actions / events | **not wired** | Tickertape / Trendlyne / CMOTS |

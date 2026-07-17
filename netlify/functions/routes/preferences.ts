@@ -28,6 +28,19 @@ preferencesRoutes.get("/", requireUser, async (c) => {
   return c.json(data);
 });
 
+preferencesRoutes.get("/deliveries", requireUser, async (c) => {
+  const user = c.get("user");
+  const limit = Math.min(100, Math.max(1, Number(c.req.query("limit") || "50")));
+  const { data, error } = await db
+    .from("delivery_logs")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) return c.json({ detail: "Failed to load delivery logs" }, 500);
+  return c.json(data || []);
+});
+
 preferencesRoutes.put("/", requireUser, async (c) => {
   const user = c.get("user");
   const body = await c.req.json<Record<string, unknown>>();

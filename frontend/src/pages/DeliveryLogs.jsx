@@ -3,10 +3,13 @@ import { useCached } from "../lib/cache";
 import { fmtDate } from "../lib/fmt";
 import StatusDot from "../components/StatusDot";
 import { SkeletonTableRows } from "../components/SkeletonBits";
+import { useAuth } from "../lib/auth";
 
 export default function DeliveryLogs() {
-  const { data: items = [], loading } = useCached("delivery:logs",
-    () => api.get("/admin/deliveries").then((r) => r.data).catch(() => []));
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const { data: items = [], loading } = useCached(`delivery:logs:${isAdmin ? "admin" : "me"}`,
+    () => api.get(isAdmin ? "/admin/deliveries" : "/preferences/deliveries").then((r) => r.data).catch(() => []));
   const showSk = loading && items.length === 0;
 
   return (
@@ -14,6 +17,9 @@ export default function DeliveryLogs() {
       <header>
         <div className="overline">Logistics</div>
         <h1 className="font-heading text-3xl">Delivery Logs</h1>
+        <div className="text-[12px] mt-1" style={{ color: "var(--text-muted)" }}>
+          {isAdmin ? "Showing all report delivery attempts." : "Showing report deliveries sent to your account."}
+        </div>
       </header>
       <div className="panel overflow-x-auto" data-testid="deliveries-table">
         <table className="w-full data-table">

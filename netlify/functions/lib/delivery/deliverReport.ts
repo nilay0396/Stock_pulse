@@ -16,6 +16,25 @@ function isDeliverableEmail(email: string | null | undefined): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed) && !RESERVED_EMAIL_DOMAINS.has(domain);
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withOneRetry(send: () => Promise<ChannelResult>): Promise<ChannelResult> {
+  const first = await send();
+  if (first.ok || first.status !== "failed") return { ...first, response_meta: { ...(first.response_meta || {}), attempts: 1 } };
+  await sleep(750);
+  const second = await send();
+  return {
+    ...second,
+    response_meta: {
+      ...(second.response_meta || {}),
+      attempts: 2,
+      first_error: first.error,
+    },
+  };
+}
+
 async function logDelivery(row: {
   report_run_id: string;
   user_id?: string | null;
@@ -77,7 +96,7 @@ export async function deliverReport(reportRunId: string): Promise<DeliveryResult
     let res: ChannelResult = { ok: true, status: "sent", response_meta: { message_count: 0 } };
     const messageIds: unknown[] = [];
     for (const message of telegramMessages) {
-      const partRes = await sendTelegram(settings, chatId, message);
+      const partRes = await withOneRetry(() => sendTelegram(settings, chatId, message));
       if (partRes.response_meta?.message_id) messageIds.push(partRes.response_meta.message_id);
       res = {
         ok: partRes.ok,
@@ -122,7 +141,7 @@ export async function deliverReport(reportRunId: string): Promise<DeliveryResult
       continue;
     }
     result.attempted += 1;
-    const res = await sendEmail(settings, user.email, subject, html, text);
+    const res = await withOneRetry(() => sendEmail(settings, user.email, subject, html, text));
     result[res.status] += 1;
     await logDelivery({
       report_run_id: reportRunId,

@@ -1,10 +1,8 @@
 /**
- * LLM layer — Claude via the official @anthropic-ai/sdk.
- * Ported from backend/services/sentiment.py (which used the emergentintegrations
- * proxy). Three call sites: per-symbol news sentiment (Haiku — cheap, high
- * volume), per-idea rationale (Opus), and the daily narrative (Opus). The
- * anti-hallucination allowlist + post-validation + deterministic fallbacks
- * are ported verbatim — that guardrail is load-bearing.
+ * LLM layer: Claude via the official @anthropic-ai/sdk.
+ * Used for per-symbol news sentiment, per-idea rationale, stock deep-dive
+ * memos, and the daily narrative. The anti-hallucination allowlist,
+ * post-validation, and deterministic fallbacks are load-bearing guardrails.
  *
  * JSON extraction uses the same fence-stripping approach as the Python
  * source rather than a structured-output API, for reliability across SDK
