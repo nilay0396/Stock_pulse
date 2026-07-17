@@ -614,6 +614,18 @@ export default function StockDeepDive() {
             </div>
           </div>
 
+          {!!data.data_warnings?.length && (
+            <div className="panel-elevated p-3 text-[12px] flex items-start gap-2" style={{ color: "var(--text-muted)" }} data-testid="deepdive-data-warnings">
+              <AlertTriangle size={14} style={{ color: "#fbbf24", marginTop: 2 }} />
+              <div>
+                <div style={{ color: "var(--text-primary)" }}>Partial data loaded successfully.</div>
+                <div className="font-mono text-[11px] mt-1">
+                  Unavailable: {data.data_warnings.map((w) => w.source).filter(Boolean).join(", ")}
+                </div>
+              </div>
+            </div>
+          )}
+
           <TabHeader tab={tab} setTab={setTab} />
           <div className="pt-2">
             {tab === "overview" && <OverviewTab d={data} />}

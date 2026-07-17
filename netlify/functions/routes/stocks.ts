@@ -16,6 +16,28 @@ export const stocksRoutes = new Hono<{ Variables: Variables }>();
 type Dict = Record<string, any>;
 type ChartInterval = "minute" | "5minute" | "15minute" | "60minute" | "day";
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function withTimeout<T>(label: string, promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ]);
+}
+
+async function safe<T>(label: string, promise: Promise<T>, fallback: T, warnings: Dict[]): Promise<T> {
+  try {
+    return await promise;
+  } catch (err) {
+    const message = errorMessage(err);
+    console.warn(`stock-deep-dive: ${label} failed:`, message);
+    warnings.push({ source: label, error: message });
+    return fallback;
+  }
+}
+
 function chartConfig(inputInterval?: string, inputRange?: string): { interval: ChartInterval; days: number; label: string } {
   const key = (inputInterval || "1d").toLowerCase();
   if (key === "1m" || key === "minute") return { interval: "minute", days: inputRange === "5d" ? 5 : 2, label: "1m" };
@@ -301,6 +323,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Dict;
   const cfg = chartConfig(body.interval, body.range);
   const aggregateMonthly = cfg.label === "1mo";
+  const warnings: Dict[] = [];
   const { data: universe, error: universeError } = await db
     .from("stock_universe")
     .select("*")
@@ -310,22 +333,22 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
   if (!universe) return c.json({ detail: "Stock not found" }, 404);
 
   const [ohlcResult, fundamentalsMap, storedSnapshot, score, news, events, fno] = await Promise.all([
-    stockOhlc(symbol, cfg.days, cfg.interval),
-    fetchQuoteSummaryInfo([symbol]).catch(() => ({} as Record<string, Record<string, any>>)),
-    latestSnapshot(symbol),
-    latestScore(symbol),
-    stockNews(symbol, 25, universe),
-    stockEvents(symbol),
-    stockFno(symbol),
+    safe("ohlc", withTimeout("ohlc", stockOhlc(symbol, cfg.days, cfg.interval), 4500), { candles: [], source: "none", interval: cfg.interval } as { candles: Dict[]; source: "kite" | "yahoo" | "none"; interval: ChartInterval }, warnings),
+    safe("fundamentals", withTimeout("fundamentals", fetchQuoteSummaryInfo([symbol]), 3000), {} as Record<string, Record<string, any>>, warnings),
+    safe("stored_snapshot", latestSnapshot(symbol), null, warnings),
+    safe("score", latestScore(symbol), null, warnings),
+    safe("news", withTimeout("news", stockNews(symbol, 25, universe), 3000), [] as Dict[], warnings),
+    safe("events", withTimeout("events", stockEvents(symbol), 2000), { next_earnings: null, announcements: [], actions: [] }, warnings),
+    safe("fno", withTimeout("fno", stockFno(symbol), 2500), { eligible: false, source: "none", providers_tried: [{ provider: "kite", error: "Timed out or unavailable" }] }, warnings),
   ]);
 
   const ohlc = aggregateMonthly ? aggregateMonthlyCandles(ohlcResult.candles) : ohlcResult.candles;
-  const computedSnapshot = ohlc.length ? computeSnapshot(ohlc.map((b) => ({
-    close: b.close,
-    high: b.high,
-    low: b.low,
-    volume: b.volume,
-  }))) : {};
+  const computedSnapshot = await safe("technicals", Promise.resolve(ohlc.length ? computeSnapshot(ohlc.map((b) => ({
+      close: b.close,
+      high: b.high,
+      low: b.low,
+      volume: b.volume,
+    }))) : {}), {}, warnings);
   const technicals = { ...(storedSnapshot || {}), ...computedSnapshot };
   const fundamentals = (fundamentalsMap as Record<string, Record<string, any>>)[symbol] || {};
   const sector = universe.sector === "Other" && fundamentals.sector ? fundamentals.sector : universe.sector;
@@ -346,7 +369,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
   };
   const aiSummary = body.skip_llm || !llmAvailable()
     ? fallbackStockDeepDiveMemo(memoPayload)
-    : await generateStockDeepDiveMemo(memoPayload);
+    : await safe("ai_memo", withTimeout("ai_memo", generateStockDeepDiveMemo(memoPayload), 2500), fallbackStockDeepDiveMemo(memoPayload), warnings);
 
   return c.json({
     symbol,
@@ -368,6 +391,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
     events,
     fno,
     ai_summary: aiSummary,
+    data_warnings: warnings,
     from_cache: false,
   });
 });
