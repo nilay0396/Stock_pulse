@@ -488,7 +488,7 @@ function ScoreTab({ d }) {
       )}
       {!d.ai_summary && (
         <div className="text-[12px]" style={{ color: "var(--text-muted)" }}>
-          AI memo not generated for this fetch (skip_llm). Use "Refresh with AI" to generate.
+          AI memo is temporarily unavailable. Refresh to retry the analysis.
         </div>
       )}
     </div>
@@ -502,7 +502,6 @@ export default function StockDeepDive() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [tab, setTab] = useState("overview");
-  const [withAI, setWithAI] = useState(true);
   const [chartInterval, setChartInterval] = useState("1d");
   const [liveChart, setLiveChart] = useState(true);
 
@@ -512,7 +511,7 @@ export default function StockDeepDive() {
     setError(null);
     try {
       const { data } = await api.post(`/stocks/${sym}/deep-dive`,
-        { skip_llm: opts.skipAI ? true : !withAI, force_refresh: !!opts.force, interval: opts.interval || chartInterval });
+        { skip_llm: !!opts.skipAI, force_refresh: !!opts.force, interval: opts.interval || chartInterval });
       setData(data);
       if (!opts.keepTab) setTab("overview");
     } catch (e) {
@@ -604,10 +603,9 @@ export default function StockDeepDive() {
               <div className="font-mono text-[14px]"><b>{data.symbol}</b> <span style={{ color: "var(--text-muted)" }}>· ₹{fmt(data.technicals?.last_close)}</span></div>
             </div>
             <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
-                <input type="checkbox" checked={withAI} onChange={(e) => setWithAI(e.target.checked)} data-testid="deepdive-ai-toggle" />
-                AI memo
-              </label>
+              <div className="text-[11px] font-mono" style={{ color: "var(--text-muted)" }} data-testid="deepdive-ai-required">
+                AI memo required
+              </div>
               <button className="btn btn-outline text-[12px]" onClick={() => runFetch(data.symbol, { force: true })} data-testid="deepdive-refresh">
                 <RefreshCw size={13} /> Refresh
               </button>
