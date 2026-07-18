@@ -1,25 +1,10 @@
 import { Hono } from "hono";
 import { db } from "../lib/db.js";
 import { requireAdmin, requireUser, type PublicUser } from "../lib/auth.js";
+import { dispatchWorkflow, githubWorkflowConfig } from "../lib/githubWorkflow.js";
 
 type Variables = { user: PublicUser };
 export const reportsRoutes = new Hono<{ Variables: Variables }>();
-
-function githubWorkflowConfig(): {
-  token: string;
-  owner: string;
-  repo: string;
-  workflow: string;
-  ref: string;
-} {
-  return {
-    token: process.env.GITHUB_WORKFLOW_TOKEN || process.env.GH_WORKFLOW_TOKEN || "",
-    owner: process.env.GITHUB_WORKFLOW_OWNER || "nilay0396",
-    repo: process.env.GITHUB_WORKFLOW_REPO || "Stock_pulse",
-    workflow: process.env.GITHUB_WORKFLOW_FILE || "daily-report.yml",
-    ref: process.env.GITHUB_WORKFLOW_REF || "main",
-  };
-}
 
 // POST /reports/run
 // Dispatches the long-running report pipeline through GitHub Actions. Running
@@ -42,22 +27,10 @@ reportsRoutes.post("/run", requireAdmin, async (c) => {
     skip_delivery: String(Boolean(body.skip_delivery ?? false)),
   };
 
-  const url = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/actions/workflows/${encodeURIComponent(cfg.workflow)}/dispatches`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      accept: "application/vnd.github+json",
-      authorization: `Bearer ${cfg.token}`,
-      "content-type": "application/json",
-      "user-agent": "market-pulse-india",
-      "x-github-api-version": "2022-11-28",
-    },
-    body: JSON.stringify({ ref: cfg.ref, inputs }),
-  });
-
-  if (res.status !== 204) {
-    const text = await res.text().catch(() => "");
-    return c.json({ detail: `GitHub workflow dispatch failed: HTTP ${res.status}${text ? ` ${text}` : ""}` }, 502);
+  try {
+    await dispatchWorkflow(cfg, inputs);
+  } catch (err) {
+    return c.json({ detail: err instanceof Error ? err.message : "GitHub workflow dispatch failed" }, 502);
   }
 
   return c.json({

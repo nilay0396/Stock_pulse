@@ -82,6 +82,39 @@ Telegram and Gmail delivery are wired and live once credentials are saved in
 **Admin -> Settings** and dry-run is disabled. Delivery attempts are recorded in
 the Delivery Logs page; admins see all deliveries, users see their own delivery history.
 
+## GitHub Actions backup scheduler
+
+GitHub Actions owns the primary report cron at 09:00 and 13:00 IST. For a
+second safety clock, configure an external cron monitor such as cron-job.org to
+call the Netlify backup endpoint shortly after each slot:
+
+```text
+https://<netlify-site>/.netlify/functions/report-scheduler-backup?slot=09
+https://<netlify-site>/.netlify/functions/report-scheduler-backup?slot=13
+```
+
+Use method `POST` if the scheduler supports it, otherwise `GET` is accepted.
+Add header:
+
+```text
+x-scheduler-secret: <REPORT_BACKUP_SECRET>
+```
+
+Required Netlify environment variables:
+
+| Key | Description |
+|---|---|
+| `REPORT_BACKUP_SECRET` | Shared secret required by the backup endpoint |
+| `GITHUB_WORKFLOW_TOKEN` | Fine-grained GitHub PAT with Actions read/write and Contents read |
+| `GITHUB_WORKFLOW_OWNER` | Optional, defaults to `nilay0396` |
+| `GITHUB_WORKFLOW_REPO` | Optional, defaults to `Stock_pulse` |
+| `GITHUB_WORKFLOW_FILE` | Optional, defaults to `daily-report.yml` |
+| `GITHUB_WORKFLOW_REF` | Optional, defaults to `main` |
+
+The endpoint is slot-aware: it checks Supabase and recent GitHub workflow runs
+for the requested slot before dispatching, so the backup should skip when the
+normal scheduler has already run.
+
 ## Data sources (connector registry)
 
 - `yfinance_macro` — NIFTY, BANKNIFTY, INDIAVIX, USDINR, DXY, crude, gold, silver, copper, US2Y/10Y, SP500/NASDAQ/NIKKEI/HANGSENG/BTC.
