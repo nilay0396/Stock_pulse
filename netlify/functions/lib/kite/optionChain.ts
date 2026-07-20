@@ -9,10 +9,9 @@ import { db } from "../db.js";
  * F&O module was stubbed out entirely (NSE-direct blocked by Akamai WAF;
  * Upstox/Fyers integrations never implemented).
  *
- * Two fields Kite's quote API does not provide, left null rather than
- * fabricated: `change_oi` (no prior-day OI baseline in the basic quote
- * response) and `iv` (would need a Black-Scholes back-out from LTP, out of
- * scope for a data connector).
+ * Kite quote data does not directly provide IV. We estimate IV from LTP using
+ * Black-Scholes when spot/strike/expiry are available, and persist OI
+ * snapshots so later runs can calculate change-in-OI.
  */
 
 export interface NormalizedContract {
@@ -77,6 +76,53 @@ async function persistOiSnapshots(chain: OptionChain): Promise<void> {
   if (!rows.length) return;
   const { error } = await db.from("fno_oi_snapshots").insert(rows);
   if (error) console.warn("fno_oi_snapshots insert warning:", error.message);
+}
+
+function normCdf(x: number): number {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989423 * Math.exp((-x * x) / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return x > 0 ? 1 - p : p;
+}
+
+function blackScholes(
+  side: "CE" | "PE",
+  spot: number,
+  strike: number,
+  years: number,
+  vol: number,
+  rate = 0.065,
+): number {
+  if (spot <= 0 || strike <= 0 || years <= 0 || vol <= 0) return 0;
+  const sqrtT = Math.sqrt(years);
+  const d1 = (Math.log(spot / strike) + (rate + 0.5 * vol * vol) * years) / (vol * sqrtT);
+  const d2 = d1 - vol * sqrtT;
+  if (side === "CE") return spot * normCdf(d1) - strike * Math.exp(-rate * years) * normCdf(d2);
+  return strike * Math.exp(-rate * years) * normCdf(-d2) - spot * normCdf(-d1);
+}
+
+function impliedVolPct(
+  side: "CE" | "PE",
+  ltp: number | null,
+  spot: number | null,
+  strike: number,
+  expiry: string,
+): number | null {
+  if (!ltp || !spot || !strike) return null;
+  const years = Math.max(1 / 365, (new Date(`${expiry}T15:30:00+05:30`).getTime() - Date.now()) / (365 * 86400000));
+  const intrinsic = side === "CE" ? Math.max(0, spot - strike) : Math.max(0, strike - spot);
+  if (ltp <= intrinsic) return null;
+
+  let lo = 0.01;
+  let hi = 5.0;
+  for (let i = 0; i < 70; i += 1) {
+    const mid = (lo + hi) / 2;
+    const price = blackScholes(side, spot, strike, years, mid);
+    if (price > ltp) hi = mid;
+    else lo = mid;
+  }
+  const iv = ((lo + hi) / 2) * 100;
+  return Number.isFinite(iv) && iv > 0 && iv < 500 ? Math.round(iv * 100) / 100 : null;
 }
 
 function toDateOnly(d: Date): string {
@@ -148,25 +194,6 @@ export async function fetchOptionChain(kc: Connect, underlying: string): Promise
     const instrumentKeys = contracts.map((c) => `${c.exchange}:${c.tradingsymbol}`);
     const quotes = await kc.getQuote(instrumentKeys);
 
-    const calls: NormalizedContract[] = [];
-    const puts: NormalizedContract[] = [];
-    for (const c of contracts) {
-      const q = quotes[`${c.exchange}:${c.tradingsymbol}`];
-      const oi = q?.oi ?? null;
-      const prevOi = oi === null ? null : await previousOi(underlying, expiry, c.strike, c.instrument_type);
-      const contract: NormalizedContract = {
-        strike: c.strike,
-        expiry,
-        oi,
-        change_oi: oi === null || prevOi === null ? null : oi - prevOi,
-        ltp: q?.last_price ?? null,
-        volume: q?.volume ?? null,
-        iv: null,
-        side: c.instrument_type,
-      };
-      (c.instrument_type === "CE" ? calls : puts).push(contract);
-    }
-
     // Spot price for the underlying, best-effort (index underlyings like
     // NIFTY aren't NSE:EQ tradingsymbols, so this can legitimately fail).
     let underlyingPrice: number | null = null;
@@ -176,6 +203,26 @@ export async function fetchOptionChain(kc: Connect, underlying: string): Promise
       underlyingPrice = spotQuote[spotKey]?.last_price ?? null;
     } catch {
       underlyingPrice = null;
+    }
+
+    const calls: NormalizedContract[] = [];
+    const puts: NormalizedContract[] = [];
+    for (const c of contracts) {
+      const q = quotes[`${c.exchange}:${c.tradingsymbol}`];
+      const oi = q?.oi ?? null;
+      const ltp = q?.last_price ?? null;
+      const prevOi = oi === null ? null : await previousOi(underlying, expiry, c.strike, c.instrument_type);
+      const contract: NormalizedContract = {
+        strike: c.strike,
+        expiry,
+        oi,
+        change_oi: oi === null || prevOi === null ? null : oi - prevOi,
+        ltp,
+        volume: q?.volume ?? null,
+        iv: impliedVolPct(c.instrument_type, ltp, underlyingPrice, c.strike, expiry),
+        side: c.instrument_type,
+      };
+      (c.instrument_type === "CE" ? calls : puts).push(contract);
     }
 
     const chain = {

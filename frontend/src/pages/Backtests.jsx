@@ -138,6 +138,9 @@ export default function Backtests() {
           <PerfBucket title="By Horizon" rows={performance?.by_horizon || []} />
           <PerfBucket title="By Direction" rows={performance?.by_direction || []} />
           <PerfBucket title="Top Sectors" rows={(performance?.by_sector || []).slice(0, 8)} />
+          <PerfBucket title="By Setup" rows={performance?.by_setup || []} />
+          <PerfBucket title="By Regime" rows={performance?.by_market_regime || []} />
+          <PerfBucket title="AI Confidence" rows={performance?.by_ai_confidence || []} />
         </div>
       </section>
 

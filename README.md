@@ -172,11 +172,9 @@ Run official-data ingestion from a residential/home machine before the report
 cron when NSE/BSE blocks cloud IPs:
 
 ```powershell
-cd C:\Users\nilay\Downloads\Market-pulse-main\Market-pulse-main\netlify\functions
 $env:SUPABASE_URL="<your supabase url>"
 $env:SUPABASE_SERVICE_ROLE_KEY="<your service role key>"
-$env:OFFICIAL_INGEST_DAYS="7"
-npm.cmd run ingest:official
+powershell -ExecutionPolicy Bypass -File C:\Users\nilay\Downloads\Market-pulse-main\Market-pulse-main\scripts\run-official-ingest.ps1 -Days 7
 ```
 
 Recommended Windows Task Scheduler timing: 08:40 IST and 12:40 IST, before the

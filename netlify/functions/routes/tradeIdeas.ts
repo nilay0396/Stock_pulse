@@ -64,16 +64,35 @@ tradeIdeasRoutes.get("/followups", requireUser, async (c) => {
 tradeIdeasRoutes.get("/performance", requireUser, async (c) => {
   const { data, error } = await db
     .from("recommendation_lifecycle")
-    .select("symbol,sector,horizon,direction,conviction,status,return_pct,days_active")
+    .select("trade_idea_id,symbol,sector,horizon,direction,conviction,status,return_pct,days_active")
     .in("status", ["hit_target", "hit_stop", "expired", "no_entry", "no_data", "error"])
     .limit(1000);
   if (error) return c.json({ detail: "Failed to load recommendation performance" }, 500);
 
-  const rows = data || [];
+  const baseRows = data || [];
+  const ideaIds = baseRows.map((r) => r.trade_idea_id).filter(Boolean);
+  const { data: ideas } = ideaIds.length
+    ? await db.from("trade_ideas").select("id,setup_type,construction,market_regime,ai_review,risk_reward").in("id", ideaIds)
+    : { data: [] };
+  const ideaMap = new Map((ideas || []).map((i) => [i.id, i as any]));
+  const rows = baseRows.map((r) => {
+    const idea = ideaMap.get(r.trade_idea_id);
+    const review = idea?.ai_review || {};
+    const confidence = Number(review.confidence ?? 0);
+    return {
+      ...r,
+      setup_type: idea?.setup_type || "Unknown",
+      construction: idea?.construction || "Unknown",
+      market_regime: idea?.market_regime || "Unknown",
+      risk_reward: idea?.risk_reward ?? null,
+      ai_decision: review.decision || (review.approved ? "approve" : "Unknown"),
+      ai_confidence_bucket: confidence >= 0.75 ? "high" : confidence >= 0.55 ? "medium" : confidence > 0 ? "low" : "unknown",
+    };
+  });
   const closed = rows.filter((r) => ["hit_target", "hit_stop", "expired"].includes(String(r.status)));
   const wins = closed.filter((r) => Number(r.return_pct || 0) > 0);
   const avg = (items: typeof rows, key: string) => items.length ? items.reduce((s, r) => s + Number((r as any)[key] || 0), 0) / items.length : 0;
-  const bucket = (key: "horizon" | "sector" | "direction") => {
+  const bucket = (key: "horizon" | "sector" | "direction" | "setup_type" | "construction" | "market_regime" | "ai_confidence_bucket") => {
     const map = new Map<string, typeof rows>();
     for (const row of closed) {
       const k = String(row[key] || "Unknown");
@@ -103,6 +122,10 @@ tradeIdeasRoutes.get("/performance", requireUser, async (c) => {
     by_horizon: bucket("horizon"),
     by_sector: bucket("sector").slice(0, 20),
     by_direction: bucket("direction"),
+    by_setup: bucket("setup_type"),
+    by_construction: bucket("construction"),
+    by_market_regime: bucket("market_regime"),
+    by_ai_confidence: bucket("ai_confidence_bucket"),
   });
 });
 
