@@ -5,8 +5,9 @@ import { fetchEquityOhlcDated, type DatedOhlcvBar } from "../market/yahoo.js";
 type Dict = Record<string, any>;
 
 const HORIZON_DAYS: Record<string, number> = { weekly: 7, monthly: 30, both: 30 };
-const FINAL_STATUSES = new Set(["hit_target", "hit_stop", "expired", "no_entry", "no_data", "error"]);
-const FINAL_STATUS_FILTER = '("hit_target","hit_stop","expired","no_entry","no_data","error")';
+const ACTIVE_STATUSES = new Set(["active", "pending_entry", "target_1_hit", "trailing"]);
+const FINAL_STATUSES = new Set(["hit_target", "hit_stop", "hit_trailing_stop", "expired", "no_entry", "no_data", "error"]);
+const FINAL_STATUS_FILTER = '("hit_target","hit_stop","hit_trailing_stop","expired","no_entry","no_data","error")';
 
 type LifecycleRow = {
   id: string;
@@ -30,6 +31,10 @@ type LifecycleRow = {
   entry_price?: number | null;
   exit_date?: string | null;
   exit_price?: number | null;
+  target1_date?: string | null;
+  target1_price?: number | null;
+  trailing_stop?: number | null;
+  partial_exit_pct?: number | null;
   return_pct?: number | null;
   days_active?: number | null;
   status_note?: string | null;
@@ -70,8 +75,11 @@ function entryPriceForBar(bar: DatedOhlcvBar, entryLow: number, entryHigh: numbe
 function followupText(row: LifecycleRow): string {
   const sym = row.symbol;
   const pct = row.return_pct !== null && row.return_pct !== undefined ? `${row.return_pct > 0 ? "+" : ""}${row.return_pct}%` : "flat";
-  if (row.status === "hit_target") return `${sym} hit target. Book outcome; thesis completed with ${pct}.`;
+  if (row.status === "target_1_hit") return `${sym} hit target 1. Book partial profit and trail the balance; tracked return is ${pct}.`;
+  if (row.status === "trailing") return `${sym} is trailing after target 1. Hold balance while above trailing stop ${row.trailing_stop ?? "—"}; tracked return is ${pct}.`;
+  if (row.status === "hit_target") return `${sym} hit final target. Book remaining outcome; thesis completed with ${pct}.`;
   if (row.status === "hit_stop") return `${sym} hit stop-loss. Close the idea; risk control triggered at ${pct}.`;
+  if (row.status === "hit_trailing_stop") return `${sym} hit trailing stop after target 1. Close remaining balance; tracked return is ${pct}.`;
   if (row.status === "expired") return `${sym} expired by time. Review rather than extend automatically; last tracked return was ${pct}.`;
   if (row.status === "no_entry") return `${sym} never entered the suggested range before expiry. No trade taken.`;
   if (row.status === "active") return `${sym} remains active. Hold the original plan unless fresh news invalidates the setup; tracked return is ${pct}.`;
@@ -108,10 +116,22 @@ function evaluateLifecycle(row: LifecycleRow, bars: DatedOhlcvBar[], now = new D
   let entryPrice = asNumber(row.entry_price);
   let exitDate = row.exit_date || null;
   let exitPrice = asNumber(row.exit_price);
+  let target1Date = row.target1_date || null;
+  let target1Price = asNumber(row.target1_price);
+  let trailingStop = asNumber(row.trailing_stop);
   let currentPrice = bars[bars.length - 1].close;
+
+  const t1 = direction === "bearish" ? targetHigh : targetLow;
+  const t2 = direction === "bearish" ? targetLow : targetHigh;
+  const t1AlreadyHit = Boolean(target1Date || status === "target_1_hit" || status === "trailing");
+  const initialTrail = entryPrice ? entryPrice : direction === "bearish" ? entryHigh : entryLow;
+  if (t1AlreadyHit && !trailingStop) trailingStop = initialTrail;
 
   for (const bar of bars) {
     currentPrice = bar.close;
+    if (row.target1_date && bar.date <= row.target1_date) continue;
+    if (!row.target1_date && row.entry_date && bar.date <= row.entry_date) continue;
+
     if (!entryDate && enteredOnBar(bar, entryLow, entryHigh)) {
       entryDate = bar.date;
       entryPrice = entryPriceForBar(bar, entryLow, entryHigh);
@@ -121,30 +141,70 @@ function evaluateLifecycle(row: LifecycleRow, bars: DatedOhlcvBar[], now = new D
     if (!entryDate) continue;
 
     if (direction === "bearish") {
-      if (bar.high >= stopLoss) {
+      let hitTarget1ThisBar = false;
+      if (!target1Date && bar.high >= stopLoss) {
         status = "hit_stop";
         exitDate = bar.date;
         exitPrice = stopLoss;
         break;
       }
-      if (bar.low <= targetHigh) {
-        status = "hit_target";
-        exitDate = bar.date;
-        exitPrice = targetHigh;
-        break;
+      if (!target1Date && bar.low <= t1) {
+        status = "target_1_hit";
+        target1Date = bar.date;
+        target1Price = t1;
+        trailingStop = entryPrice || entryHigh;
+        hitTarget1ThisBar = true;
+      }
+      if (target1Date) {
+        status = hitTarget1ThisBar ? "target_1_hit" : "trailing";
+        if (bar.low <= t2) {
+          status = "hit_target";
+          exitDate = bar.date;
+          exitPrice = t2;
+          break;
+        }
+        if (!hitTarget1ThisBar) {
+          trailingStop = trailingStop ? Math.min(trailingStop, Math.max(bar.close * 1.025, bar.high)) : entryPrice || entryHigh;
+        }
+        if (!hitTarget1ThisBar && bar.high >= trailingStop) {
+          status = "hit_trailing_stop";
+          exitDate = bar.date;
+          exitPrice = trailingStop;
+          break;
+        }
       }
     } else {
-      if (bar.low <= stopLoss) {
+      let hitTarget1ThisBar = false;
+      if (!target1Date && bar.low <= stopLoss) {
         status = "hit_stop";
         exitDate = bar.date;
         exitPrice = stopLoss;
         break;
       }
-      if (bar.high >= targetLow) {
-        status = "hit_target";
-        exitDate = bar.date;
-        exitPrice = targetLow;
-        break;
+      if (!target1Date && bar.high >= t1) {
+        status = "target_1_hit";
+        target1Date = bar.date;
+        target1Price = t1;
+        trailingStop = entryPrice || entryLow;
+        hitTarget1ThisBar = true;
+      }
+      if (target1Date) {
+        status = hitTarget1ThisBar ? "target_1_hit" : "trailing";
+        if (bar.high >= t2) {
+          status = "hit_target";
+          exitDate = bar.date;
+          exitPrice = t2;
+          break;
+        }
+        if (!hitTarget1ThisBar) {
+          trailingStop = trailingStop ? Math.max(trailingStop, Math.min(bar.close * 0.975, bar.low)) : entryPrice || entryLow;
+        }
+        if (!hitTarget1ThisBar && bar.low <= trailingStop) {
+          status = "hit_trailing_stop";
+          exitDate = bar.date;
+          exitPrice = trailingStop;
+          break;
+        }
       }
     }
   }
@@ -154,7 +214,11 @@ function evaluateLifecycle(row: LifecycleRow, bars: DatedOhlcvBar[], now = new D
       status = "no_entry";
       exitDate = bars[bars.length - 1].date;
       exitPrice = currentPrice;
-    } else {
+    } else if (!target1Date && status !== "target_1_hit" && status !== "trailing") {
+      status = "expired";
+      exitDate = bars[bars.length - 1].date;
+      exitPrice = currentPrice;
+    } else if (elapsedDays >= horizonDays + Math.ceil(horizonDays * 0.75)) {
       status = "expired";
       exitDate = bars[bars.length - 1].date;
       exitPrice = currentPrice;
@@ -171,6 +235,10 @@ function evaluateLifecycle(row: LifecycleRow, bars: DatedOhlcvBar[], now = new D
     entry_price: entryPrice ? round(entryPrice, 2) : null,
     exit_date: exitDate,
     exit_price: exitPrice ? round(exitPrice, 2) : null,
+    target1_date: target1Date,
+    target1_price: target1Price ? round(target1Price, 2) : null,
+    trailing_stop: trailingStop ? round(trailingStop, 2) : null,
+    partial_exit_pct: row.partial_exit_pct ?? 50,
     return_pct: returnPct,
     days_active: elapsedDays,
     status_note: status.replace(/_/g, " "),
@@ -242,6 +310,10 @@ async function updateOne(row: LifecycleRow): Promise<LifecycleRow> {
         entry_price: next.entry_price ?? null,
         exit_date: next.exit_date ?? null,
         exit_price: next.exit_price ?? null,
+        target1_date: next.target1_date ?? null,
+        target1_price: next.target1_price ?? null,
+        trailing_stop: next.trailing_stop ?? null,
+        partial_exit_pct: next.partial_exit_pct ?? 50,
         return_pct: next.return_pct ?? null,
         days_active: next.days_active ?? 0,
         last_checked_at: new Date().toISOString(),
@@ -295,6 +367,10 @@ function compact(row: LifecycleRow): Dict {
     entry_price: row.entry_price,
     exit_date: row.exit_date,
     exit_price: row.exit_price,
+    target1_date: row.target1_date,
+    target1_price: row.target1_price,
+    trailing_stop: row.trailing_stop,
+    partial_exit_pct: row.partial_exit_pct,
     return_pct: row.return_pct,
     days_active: row.days_active,
     status_note: row.status_note,
@@ -329,7 +405,7 @@ function compactGrouped(rows: LifecycleRow[], mode: "active" | "resolved"): Dict
     const horizons = [...new Set(bucket.map((row) => row.horizon).filter(Boolean))].join(", ");
     const statuses = [...new Set(bucket.map((row) => row.status).filter(Boolean))];
     const status = mode === "active"
-      ? (statuses.includes("active") ? "active" : "pending_entry")
+      ? (statuses.includes("trailing") ? "trailing" : statuses.includes("target_1_hit") ? "target_1_hit" : statuses.includes("active") ? "active" : "pending_entry")
       : primary.status;
     const count = bucket.length;
     const range = best === null || worst === null
@@ -396,7 +472,7 @@ export async function updateRecommendationLifecycle(): Promise<Dict> {
 
   const before = (data || []) as LifecycleRow[];
   const updated = before.length ? await runPool(before, 5, updateOne) : [];
-  const active = updated.filter((row) => row.status === "active" || row.status === "pending_entry");
+  const active = updated.filter((row) => ACTIVE_STATUSES.has(row.status));
   const resolved = updated.filter((row) => FINAL_STATUSES.has(row.status));
   const entered = updated.filter((row) => row.entry_date);
   const positive = entered.filter((row) => Number(row.return_pct || 0) > 0);
@@ -407,7 +483,8 @@ export async function updateRecommendationLifecycle(): Promise<Dict> {
     active_count: active.length,
     resolved_count: resolved.length,
     hit_target_count: resolved.filter((row) => row.status === "hit_target").length,
-    hit_stop_count: resolved.filter((row) => row.status === "hit_stop").length,
+    target_1_hit_count: active.filter((row) => row.status === "target_1_hit" || row.status === "trailing").length,
+    hit_stop_count: resolved.filter((row) => row.status === "hit_stop" || row.status === "hit_trailing_stop").length,
     no_entry_count: resolved.filter((row) => row.status === "no_entry").length,
     win_rate_pct: entered.length ? round((positive.length / entered.length) * 100, 2) : null,
     active: compactGrouped(active, "active")

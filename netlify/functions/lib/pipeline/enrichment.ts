@@ -164,7 +164,7 @@ export async function loadPerformanceCalibration(): Promise<Dict> {
   const { data, error } = await db
     .from("recommendation_lifecycle")
     .select("trade_idea_id, sector, horizon, direction, status, return_pct")
-    .in("status", ["hit_target", "hit_stop", "expired"])
+    .in("status", ["hit_target", "hit_stop", "hit_trailing_stop", "expired"])
     .limit(1000);
   if (error || !data?.length) return { sample: 0, thresholdOffset: 0, notes: ["No lifecycle history yet; calibration neutral."] };
   const closed = data || [];

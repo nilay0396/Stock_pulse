@@ -109,9 +109,10 @@ export default function ReportPreview() {
 }
 
 function statusBadge(status) {
-  const resolved = ["hit_target", "hit_stop", "expired", "no_entry", "no_data", "error"];
+  const resolved = ["hit_target", "hit_stop", "hit_trailing_stop", "expired", "no_entry", "no_data", "error"];
   if (status === "hit_target") return "badge badge-bullish";
-  if (status === "hit_stop" || status === "error") return "badge badge-bearish";
+  if (status === "target_1_hit" || status === "trailing") return "badge badge-bullish";
+  if (status === "hit_stop" || status === "hit_trailing_stop" || status === "error") return "badge badge-bearish";
   if (resolved.includes(status)) return "badge badge-watch";
   return "badge";
 }

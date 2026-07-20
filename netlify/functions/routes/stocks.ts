@@ -59,7 +59,7 @@ async function recommendationFollowups(symbol: string): Promise<Dict> {
     .limit(20);
   if (error) return { active: [], resolved: [], error: error.message };
   const rows = data || [];
-  const activeStatuses = new Set(["active", "pending_entry"]);
+  const activeStatuses = new Set(["active", "pending_entry", "target_1_hit", "trailing"]);
   const active = rows.filter((row) => activeStatuses.has(String(row.status))).slice(0, 8);
   const resolved = rows.filter((row) => !activeStatuses.has(String(row.status))).slice(0, 8);
   return { active, resolved };

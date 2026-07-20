@@ -50,9 +50,9 @@ tradeIdeasRoutes.get("/followups", requireUser, async (c) => {
   let query = db.from("recommendation_lifecycle").select("*");
 
   if (status === "resolved") {
-    query = query.in("status", ["hit_target", "hit_stop", "expired", "no_entry", "no_data", "error"]);
+    query = query.in("status", ["hit_target", "hit_stop", "hit_trailing_stop", "expired", "no_entry", "no_data", "error"]);
   } else if (status && status !== "all") {
-    query = query.in("status", ["pending_entry", "active"]);
+    query = query.in("status", ["pending_entry", "active", "target_1_hit", "trailing"]);
   }
 
   const { data, error } = await query.order("updated_at", { ascending: false }).limit(limit);
@@ -65,7 +65,7 @@ tradeIdeasRoutes.get("/performance", requireUser, async (c) => {
   const { data, error } = await db
     .from("recommendation_lifecycle")
     .select("trade_idea_id,symbol,sector,horizon,direction,conviction,status,return_pct,days_active")
-    .in("status", ["hit_target", "hit_stop", "expired", "no_entry", "no_data", "error"])
+    .in("status", ["hit_target", "hit_stop", "hit_trailing_stop", "expired", "no_entry", "no_data", "error"])
     .limit(1000);
   if (error) return c.json({ detail: "Failed to load recommendation performance" }, 500);
 
@@ -89,7 +89,7 @@ tradeIdeasRoutes.get("/performance", requireUser, async (c) => {
       ai_confidence_bucket: confidence >= 0.75 ? "high" : confidence >= 0.55 ? "medium" : confidence > 0 ? "low" : "unknown",
     };
   });
-  const closed = rows.filter((r) => ["hit_target", "hit_stop", "expired"].includes(String(r.status)));
+  const closed = rows.filter((r) => ["hit_target", "hit_stop", "hit_trailing_stop", "expired"].includes(String(r.status)));
   const wins = closed.filter((r) => Number(r.return_pct || 0) > 0);
   const avg = (items: typeof rows, key: string) => items.length ? items.reduce((s, r) => s + Number((r as any)[key] || 0), 0) / items.length : 0;
   const bucket = (key: "horizon" | "sector" | "direction" | "setup_type" | "construction" | "market_regime" | "ai_confidence_bucket") => {
@@ -115,7 +115,7 @@ tradeIdeasRoutes.get("/performance", requireUser, async (c) => {
     closed: closed.length,
     active_sample_pending: rows.length - closed.length,
     hit_target: rows.filter((r) => r.status === "hit_target").length,
-    hit_stop: rows.filter((r) => r.status === "hit_stop").length,
+    hit_stop: rows.filter((r) => r.status === "hit_stop" || r.status === "hit_trailing_stop").length,
     no_entry: rows.filter((r) => r.status === "no_entry").length,
     hit_rate_pct: closed.length ? Math.round((wins.length / closed.length) * 10000) / 100 : 0,
     avg_return_pct: Math.round(avg(closed, "return_pct") * 1000) / 1000,
