@@ -184,6 +184,9 @@ function TabHeader({ tab, setTab }) {
 function OverviewTab({ d }) {
   const t = d.technicals || {};
   const w = d.weekly || {}, m = d.monthly || {};
+  const activeFollowups = d.followups?.active || [];
+  const resolvedFollowups = d.followups?.resolved || [];
+  const tracked = [...activeFollowups, ...resolvedFollowups].slice(0, 4);
   const planRow = (label, plan) => (
     <div className="panel-elevated p-3 flex flex-col gap-2" data-testid={`plan-${label.toLowerCase()}`}>
       <div className="flex items-center justify-between">
@@ -225,6 +228,32 @@ function OverviewTab({ d }) {
           {d.score?.passes_filters ? "Passes hard filters" : `Filtered out: ${(d.score?.filter_rejects || []).slice(0, 2).join(", ")}`}
         </div>
       </div>
+      {tracked.length > 0 && (
+        <div className="panel-elevated p-3 md:col-span-2" data-testid="tracked-recommendations">
+          <div className="overline mb-3">Tracked Recommendations</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {tracked.map((i) => (
+              <div key={`${i.trade_idea_id}-${i.status}`} className="rounded border p-3" style={{ borderColor: "var(--border)" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-mono text-[13px] font-bold">{i.horizon || "idea"} · {String(i.status || "").replace(/_/g, " ")}</div>
+                  <div className="font-mono text-[11px]" style={{ color: Number(i.return_pct || 0) >= 0 ? "#4ade80" : "#f87171" }}>
+                    {i.return_pct == null ? "—" : `${Number(i.return_pct) > 0 ? "+" : ""}${fmt(i.return_pct, 2)}%`}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[12px] font-mono mt-3">
+                  <div><span style={{ color: "var(--text-muted)" }}>Entry</span><div>₹{fmt(i.entry_low)} – {fmt(i.entry_high)}</div></div>
+                  <div><span style={{ color: "var(--text-muted)" }}>Stop</span><div style={{ color: "#f87171" }}>₹{fmt(i.stop_loss)}</div></div>
+                  <div><span style={{ color: "var(--text-muted)" }}>Target</span><div style={{ color: "#4ade80" }}>₹{fmt(i.target_low)} – {fmt(i.target_high)}</div></div>
+                  <div><span style={{ color: "var(--text-muted)" }}>Exit</span><div>{i.exit_price == null ? "—" : `₹${fmt(i.exit_price)}`}</div></div>
+                </div>
+                <div className="text-[11px] mt-2" style={{ color: "var(--text-muted)" }}>
+                  From {i.original_run_date || "—"} · {i.ai_followup || i.status_note || ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {planRow("Weekly", w)}
       {planRow("Monthly", m)}
     </div>

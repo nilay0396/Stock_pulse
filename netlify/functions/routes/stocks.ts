@@ -50,6 +50,21 @@ async function latestLiveTick(symbol: string): Promise<Dict | null> {
   return data || null;
 }
 
+async function recommendationFollowups(symbol: string): Promise<Dict> {
+  const { data, error } = await db
+    .from("recommendation_lifecycle")
+    .select("trade_idea_id,report_run_id,original_run_date,symbol,name,direction,horizon,conviction,entry_low,entry_high,stop_loss,target_low,target_high,status,current_price,entry_date,entry_price,exit_date,exit_price,return_pct,days_active,status_note,ai_followup,updated_at")
+    .eq("symbol", symbol)
+    .order("updated_at", { ascending: false })
+    .limit(20);
+  if (error) return { active: [], resolved: [], error: error.message };
+  const rows = data || [];
+  const activeStatuses = new Set(["active", "pending_entry"]);
+  const active = rows.filter((row) => activeStatuses.has(String(row.status))).slice(0, 8);
+  const resolved = rows.filter((row) => !activeStatuses.has(String(row.status))).slice(0, 8);
+  return { active, resolved };
+}
+
 async function stockMemoWithFallback(payload: Dict, skipLlm: boolean): Promise<{ text: string; source: "llm" | "fallback"; error?: string }> {
   const fallback = fallbackStockDeepDiveMemo(payload);
   if (skipLlm || !llmAvailable()) return { text: fallback, source: "fallback" };
@@ -398,7 +413,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
   if (universeError) return c.json({ detail: "Failed to load stock" }, 500);
   if (!universe) return c.json({ detail: "Stock not found" }, 404);
 
-  const [ohlcResult, fundamentalsMap, storedSnapshot, score, news, events, fno, liveTick] = await Promise.all([
+  const [ohlcResult, fundamentalsMap, storedSnapshot, score, news, events, fno, liveTick, followups] = await Promise.all([
     safe("ohlc", withTimeout("ohlc", stockOhlc(symbol, cfg.days, cfg.interval), 3500), { candles: [], source: "none", interval: cfg.interval } as { candles: Dict[]; source: "kite" | "yahoo" | "none"; interval: ChartInterval }, warnings),
     safe("fundamentals", withTimeout("fundamentals", fetchQuoteSummaryInfo([symbol]), 2200), {} as Record<string, Record<string, any>>, warnings),
     safe("stored_snapshot", latestSnapshot(symbol), null, warnings),
@@ -407,6 +422,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
     safe("events", withTimeout("events", stockEvents(symbol), 1500), { next_earnings: null, announcements: [], actions: [] }, warnings),
     safe("fno", withTimeout("fno", stockFno(symbol), 1800), { eligible: false, source: "none", providers_tried: [{ provider: "kite", error: "Timed out or unavailable" }] }, warnings),
     safe("live_tick", latestLiveTick(symbol), null, warnings),
+    safe("followups", recommendationFollowups(symbol), { active: [], resolved: [] }, warnings),
   ]);
 
   const ohlc = aggregateMonthly ? aggregateMonthlyCandles(ohlcResult.candles) : ohlcResult.candles;
@@ -465,6 +481,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
     events,
     fno,
     live_tick: liveTick,
+    followups,
     ai_summary: memo.text,
     ai_memo_source: memo.source,
     ai_memo_error: memo.error || null,
