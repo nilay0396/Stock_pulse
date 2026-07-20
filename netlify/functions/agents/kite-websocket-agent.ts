@@ -7,11 +7,19 @@ type InstrumentRow = {
   exchange: string;
 };
 
+const DEFAULT_MANUAL_SYMBOLS = "NIFTYBEES,BANKBEES,RELIANCE,TCS,HDFCBANK,ICICIBANK,INFY,SBIN";
+const REFRESH_MS = Number(process.env.KITE_STREAM_REFRESH_SECONDS || 300) * 1000;
+const MAX_SYMBOLS = Number(process.env.KITE_STREAM_MAX_SYMBOLS || 150);
+
 function envList(name: string, fallback: string): string[] {
   return String(process.env[name] || fallback)
     .split(",")
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean);
+}
+
+function uniqueSymbols(values: string[]): string[] {
+  return [...new Set(values.map((s) => s.trim().toUpperCase()).filter(Boolean))];
 }
 
 async function accessToken(): Promise<string> {
@@ -22,6 +30,7 @@ async function accessToken(): Promise<string> {
 }
 
 async function loadInstruments(symbols: string[]): Promise<InstrumentRow[]> {
+  if (!symbols.length) return [];
   const { data, error } = await db
     .from("kite_instruments")
     .select("tradingsymbol,instrument_token,exchange")
@@ -30,6 +39,42 @@ async function loadInstruments(symbols: string[]): Promise<InstrumentRow[]> {
     .in("tradingsymbol", symbols);
   if (error) throw new Error(`Instrument lookup failed: ${error.message}`);
   return (data || []) as InstrumentRow[];
+}
+
+async function loadLifecycleSymbols(): Promise<string[]> {
+  const { data, error } = await db
+    .from("recommendation_lifecycle")
+    .select("symbol,status,updated_at,created_at")
+    .in("status", ["active", "pending_entry"])
+    .order("updated_at", { ascending: false })
+    .limit(250);
+  if (error) {
+    console.warn("kite-ws: lifecycle symbol load warning:", error.message);
+    return [];
+  }
+  return (data || []).map((row) => String(row.symbol || ""));
+}
+
+async function loadRecentIdeaSymbols(): Promise<string[]> {
+  const { data, error } = await db
+    .from("trade_ideas")
+    .select("symbol,created_at")
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) {
+    console.warn("kite-ws: recent idea symbol load warning:", error.message);
+    return [];
+  }
+  return (data || []).map((row) => String(row.symbol || ""));
+}
+
+async function desiredSymbols(): Promise<string[]> {
+  const manual = envList("KITE_STREAM_SYMBOLS", DEFAULT_MANUAL_SYMBOLS);
+  const [lifecycle, recentIdeas] = await Promise.all([
+    loadLifecycleSymbols(),
+    loadRecentIdeaSymbols(),
+  ]);
+  return uniqueSymbols([...manual, ...lifecycle, ...recentIdeas]).slice(0, MAX_SYMBOLS);
 }
 
 async function upsertTicks(ticks: Tick[], byToken: Map<number, InstrumentRow>): Promise<void> {
@@ -64,12 +109,12 @@ async function main() {
   const apiKey = process.env.KITE_API_KEY;
   if (!apiKey) throw new Error("KITE_API_KEY is not set");
 
-  const symbols = envList("KITE_STREAM_SYMBOLS", "NIFTYBEES,BANKBEES,RELIANCE,TCS,HDFCBANK,ICICIBANK,INFY,SBIN");
+  const symbols = await desiredSymbols();
   const instruments = await loadInstruments(symbols);
   if (!instruments.length) throw new Error(`No NSE EQ instruments found for ${symbols.join(", ")}`);
 
   const byToken = new Map(instruments.map((row) => [Number(row.instrument_token), row]));
-  const tokens = [...byToken.keys()];
+  let subscribedTokens = new Set<number>();
   const ticker = new KiteTicker({
     api_key: apiKey,
     access_token: await accessToken(),
@@ -78,10 +123,29 @@ async function main() {
     max_delay: 5,
   });
 
+  async function refreshSubscriptions() {
+    const nextSymbols = await desiredSymbols();
+    const nextInstruments = await loadInstruments(nextSymbols);
+    const nextTokens = new Set(nextInstruments.map((row) => Number(row.instrument_token)));
+    for (const row of nextInstruments) byToken.set(Number(row.instrument_token), row);
+
+    const add = [...nextTokens].filter((token) => !subscribedTokens.has(token));
+    const remove = [...subscribedTokens].filter((token) => !nextTokens.has(token));
+    if (remove.length) {
+      ticker.unsubscribe(remove);
+      for (const token of remove) byToken.delete(token);
+    }
+    if (add.length) {
+      ticker.subscribe(add);
+      ticker.setMode(ticker.modeFull, add);
+    }
+    subscribedTokens = nextTokens;
+    console.log(`kite-ws: streaming ${subscribedTokens.size} instruments (${nextSymbols.length} desired, +${add.length}/-${remove.length})`);
+  }
+
   ticker.on("connect", () => {
-    console.log(`kite-ws: connected; subscribing ${tokens.length} instruments`);
-    ticker.subscribe(tokens);
-    ticker.setMode(ticker.modeFull, tokens);
+    console.log("kite-ws: connected");
+    void refreshSubscriptions();
   });
   ticker.on("ticks", (ticks) => {
     void upsertTicks(ticks, byToken);
@@ -95,6 +159,7 @@ async function main() {
   });
 
   ticker.connect();
+  setInterval(() => void refreshSubscriptions(), REFRESH_MS);
 }
 
 main().catch((err) => {

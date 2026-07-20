@@ -189,11 +189,14 @@ cd C:\Users\nilay\Downloads\Market-pulse-main\Market-pulse-main\netlify\function
 $env:SUPABASE_URL="<your supabase url>"
 $env:SUPABASE_SERVICE_ROLE_KEY="<your service role key>"
 $env:KITE_API_KEY="<your kite api key>"
-$env:KITE_STREAM_SYMBOLS="RELIANCE,TCS,HDFCBANK,ICICIBANK,INFY,SBIN"
+$env:KITE_STREAM_SYMBOLS="RELIANCE,TCS,HDFCBANK,ICICIBANK,INFY,SBIN" # optional always-on symbols
+$env:KITE_STREAM_MAX_SYMBOLS="150"
 npm.cmd run stream:kite
 ```
 
-The agent stores latest ticks in `live_ticks`. Keep it on a home machine,
+The agent stores latest ticks in `live_ticks`. It automatically streams manual
+symbols plus active/pending recommendation lifecycle symbols and recent report
+ideas, refreshing subscriptions every 5 minutes. Keep it on a home machine,
 small VPS, or always-on desktop session; serverless functions are not suitable
 for holding an all-day broker WebSocket.
 
