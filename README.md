@@ -134,6 +134,23 @@ counts, and persists every run in `ingestion_runs`. To swap any adapter for a pa
 (NSE official, EODHD, Alpha Vantage, Trendlyne, Tickertape, Finnhub, etc.), implement the
 same `fetch()` contract and register it in `connectors/registry.py`.
 
+## Recommendation follow-up
+
+Daily report ideas are registered in `recommendation_lifecycle` and reviewed on
+later report runs until they resolve. The pipeline checks forward OHLC against
+the original entry, stop and target levels, then classifies each idea as
+`pending_entry`, `active`, `hit_target`, `hit_stop`, `expired`, `no_entry`,
+`no_data`, or `error`.
+
+The daily email, Telegram report, and in-app report preview include:
+
+- new weekly/monthly ideas for the day
+- active follow-ups from previous reports
+- resolved follow-ups with return, days active and outcome note
+
+Weekly ideas are tracked for 7 calendar days and monthly ideas for 30 calendar
+days unless target or stop is hit first.
+
 ## Scoring engine
 
 ```

@@ -27,6 +27,23 @@ function ideaLines(idea: any): string[] {
   ];
 }
 
+function returnText(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return escapeHtml(value);
+  return `${n > 0 ? "+" : ""}${n}%`;
+}
+
+function followupLines(item: any): string[] {
+  return [
+    `<b>${escapeHtml(item.symbol)}</b>${item.name ? ` - ${escapeHtml(item.name)}` : ""}`,
+    `Status: ${escapeHtml(item.status)}`,
+    `Current: ${escapeHtml(item.current_price ?? "—")} | Return: ${returnText(item.return_pct)}`,
+    `Days active: ${escapeHtml(item.days_active ?? 0)}`,
+    escapeHtml(item.ai_followup || item.status_note || ""),
+  ];
+}
+
 function splitMessages(lines: string[]): string[] {
   const messages: string[] = [];
   let current = "";
@@ -60,6 +77,9 @@ function splitMessages(lines: string[]): string[] {
 export function formatTelegramReport(context: Record<string, any>): string[] {
   const weekly = Array.isArray(context.top_weekly) ? context.top_weekly : [];
   const monthly = Array.isArray(context.top_monthly) ? context.top_monthly : [];
+  const followups = context.followups || {};
+  const activeFollowups = Array.isArray(followups.active) ? followups.active : [];
+  const resolvedFollowups = Array.isArray(followups.resolved) ? followups.resolved : [];
   const lines = [
     `<b>MARKET PULSE INDIA</b>`,
     `<b>Daily Report - ${escapeHtml(context.run_date)}</b>`,
@@ -84,6 +104,24 @@ export function formatTelegramReport(context: Record<string, any>): string[] {
     }
   } else {
     lines.push("No monthly ideas for this run.");
+  }
+
+  lines.push("", "<b>Active Follow-ups</b>");
+  if (activeFollowups.length) {
+    for (const item of activeFollowups) {
+      lines.push(...followupLines(item), "");
+    }
+  } else {
+    lines.push("No active follow-ups yet.", "");
+  }
+
+  lines.push("<b>Resolved Follow-ups</b>");
+  if (resolvedFollowups.length) {
+    for (const item of resolvedFollowups) {
+      lines.push(...followupLines(item), "");
+    }
+  } else {
+    lines.push("No recommendations resolved in this run.");
   }
 
   return splitMessages(lines);

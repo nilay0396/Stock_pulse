@@ -24,6 +24,9 @@ export default function ReportPreview() {
   const summary = r.summary || {};
   const weekly = (r.ideas || []).filter((x) => x.horizon === "weekly");
   const monthly = (r.ideas || []).filter((x) => x.horizon === "monthly");
+  const followups = summary.followups || {};
+  const activeFollowups = Array.isArray(followups.active) ? followups.active : [];
+  const resolvedFollowups = Array.isArray(followups.resolved) ? followups.resolved : [];
 
   return (
     <div className="p-6 md:p-8 flex flex-col gap-5">
@@ -71,6 +74,26 @@ export default function ReportPreview() {
         <IdeaTable ideas={monthly} />
       </section>
 
+      <section className="panel p-5" data-testid="report-active-followups">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="overline">Active Follow-ups</div>
+          <div className="font-mono text-[11px]" style={{ color: "var(--text-muted)" }}>
+            {followups.checked || 0} checked
+          </div>
+        </div>
+        <FollowupTable items={activeFollowups} empty="No active follow-ups yet." />
+      </section>
+
+      <section className="panel p-5" data-testid="report-resolved-followups">
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="overline">Resolved Follow-ups</div>
+          <div className="font-mono text-[11px]" style={{ color: "var(--text-muted)" }}>
+            Target {followups.hit_target_count || 0} · Stop {followups.hit_stop_count || 0} · No entry {followups.no_entry_count || 0}
+          </div>
+        </div>
+        <FollowupTable items={resolvedFollowups} empty="No recommendations resolved in this run." />
+      </section>
+
       <section className="panel p-5">
         <div className="overline mb-3">Stance</div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
@@ -81,6 +104,38 @@ export default function ReportPreview() {
           Universe: {summary.universe_count} · Scored: {summary.scored_count}
         </div>
       </section>
+    </div>
+  );
+}
+
+function statusBadge(status) {
+  const resolved = ["hit_target", "hit_stop", "expired", "no_entry", "no_data", "error"];
+  if (status === "hit_target") return "badge badge-bullish";
+  if (status === "hit_stop" || status === "error") return "badge badge-bearish";
+  if (resolved.includes(status)) return "badge badge-watch";
+  return "badge";
+}
+
+function FollowupTable({ items, empty }) {
+  if (!items?.length) return <div className="text-[12px]" style={{ color: "var(--text-muted)" }}>{empty}</div>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full data-table">
+        <thead><tr><th>Symbol</th><th>Status</th><th className="numeric">Current</th><th className="numeric">Return</th><th className="numeric">Days</th><th>Follow-up</th></tr></thead>
+        <tbody>
+          {items.map((i) => (
+            <tr key={`${i.trade_idea_id}-${i.status}`}>
+              <td><Link to={`/explorer/${i.symbol}`} className="font-bold hover:underline">{i.symbol}</Link>
+                <div className="font-body text-[11px]" style={{ color: "var(--text-muted)" }}>{i.original_run_date} · {i.horizon}</div></td>
+              <td><span className={statusBadge(i.status)}>{String(i.status || "").replace(/_/g, " ")}</span></td>
+              <td className="numeric">{fmtRupee(i.current_price)}</td>
+              <td className="numeric" style={{ color: pctColor(i.return_pct) }}>{i.return_pct === null || i.return_pct === undefined ? "—" : fmtPct(i.return_pct)}</td>
+              <td className="numeric">{fmtNum(i.days_active, 0)}</td>
+              <td className="text-[12px]" style={{ minWidth: 260 }}>{i.ai_followup || i.status_note || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

@@ -37,6 +37,7 @@ import {
 import { loadUniverse, type UniverseRow } from "./universe.js";
 import { getAuthenticatedKiteClient } from "../kite/client.js";
 import { deliverReport } from "../delivery/deliverReport.js";
+import { createLifecycleRowsForIdeas, updateRecommendationLifecycle } from "./lifecycle.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Dict = Record<string, any>;
@@ -539,6 +540,28 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
     const rawRows = computeRawScores(snapshots, macro, infoCache, newsSentiment, universeBySym, sectorBreadth, commoditySector, peBy, pbBy, evBy);
     const scores = await buildScoreDocs(rawRows, runDate, runId);
     const { weekly, monthly, excluded, relaxed } = selectIdeas(scores, snapshots, runId);
+    let followups: Dict = {
+      checked: 0,
+      active_count: 0,
+      resolved_count: 0,
+      active: [],
+      resolved: [],
+    };
+    try {
+      followups = await updateRecommendationLifecycle();
+      console.log(`lifecycle | checked=${followups.checked || 0} active=${followups.active_count || 0} resolved=${followups.resolved_count || 0}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn("lifecycle warning:", message);
+      followups = {
+        checked: 0,
+        active_count: 0,
+        resolved_count: 0,
+        active: [],
+        resolved: [],
+        error: message,
+      };
+    }
     const stage3Seconds = round((Date.now() - t3) / 1000, 1);
 
     // Rationales + narrative.
@@ -567,6 +590,7 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
       }));
       const { error } = await db.from("trade_ideas").insert(ideaRows);
       if (error) throw new Error(`trade_ideas insert failed: ${error.message}`);
+      await createLifecycleRowsForIdeas([...weekly, ...monthly], runDate);
     }
 
     // Persist news items (shortlist headlines).
@@ -610,6 +634,7 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
     };
     const context = buildContext(runDate, runId, macro, scores, sectorBreadth, commoditySector, weekly, monthly, universe.length);
     context.funnel = funnelStats;
+    context.followups = followups;
     const narrative = skipLlm ? fallbackNarrative(context) : await generateReportNarrative(context);
     context.narrative = narrative;
 

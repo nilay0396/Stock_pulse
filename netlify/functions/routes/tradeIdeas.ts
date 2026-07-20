@@ -43,6 +43,23 @@ tradeIdeasRoutes.get("/", requireUser, async (c) => {
   return c.json(data || []);
 });
 
+// GET /ideas/followups?status=active|resolved
+tradeIdeasRoutes.get("/followups", requireUser, async (c) => {
+  const status = c.req.query("status") || "active";
+  const limit = Math.min(200, Math.max(1, Number(c.req.query("limit") || "100")));
+  let query = db.from("recommendation_lifecycle").select("*");
+
+  if (status === "resolved") {
+    query = query.in("status", ["hit_target", "hit_stop", "expired", "no_entry", "no_data", "error"]);
+  } else if (status && status !== "all") {
+    query = query.in("status", ["pending_entry", "active"]);
+  }
+
+  const { data, error } = await query.order("updated_at", { ascending: false }).limit(limit);
+  if (error) return c.json({ detail: "Failed to load recommendation follow-ups" }, 500);
+  return c.json(data || []);
+});
+
 // GET /ideas/scores
 tradeIdeasRoutes.get("/scores", requireUser, async (c) => {
   const sector = c.req.query("sector");
