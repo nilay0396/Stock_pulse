@@ -190,6 +190,80 @@ export function fallbackRationale(idea: Dict): string {
   return parts.join(" ");
 }
 
+export type IdeaReview = {
+  approved: boolean;
+  confidence: number;
+  decision: "approve" | "reject" | "watch";
+  reason: string;
+  red_flags: string[];
+};
+
+function fallbackIdeaReview(candidate: Dict): IdeaReview {
+  const redFlags: string[] = [];
+  const rr = Number(candidate.risk_reward || 0);
+  const sub = candidate.sub_scores || {};
+  const risks = candidate.risks || [];
+  if (rr && rr < 1.8) redFlags.push(`Reward-risk too low (${rr})`);
+  if (Number(sub.technical || 50) < 65 && candidate.horizon === "weekly") redFlags.push("Weekly technical score below reviewer comfort");
+  if (Number(sub.fundamental || 50) < 62 && candidate.horizon === "monthly") redFlags.push("Monthly fundamental score below reviewer comfort");
+  if (risks.some((r: string) => /earnings|results|high leverage|elevated volatility/i.test(r))) redFlags.push("Material risk flag present");
+  if (candidate.earnings_in_days !== null && candidate.earnings_in_days !== undefined && candidate.earnings_in_days <= 7) {
+    redFlags.push(`Earnings/results event in ${candidate.earnings_in_days} days`);
+  }
+  const approved = redFlags.length === 0 && Number(candidate.conviction || 0) >= (candidate.horizon === "monthly" ? 75 : 72);
+  return {
+    approved,
+    confidence: approved ? 0.64 : 0.72,
+    decision: approved ? "approve" : "reject",
+    reason: approved
+      ? "Candidate passes deterministic reviewer: conviction, horizon fit, risk-reward and risk flags are acceptable."
+      : `Rejected by deterministic reviewer: ${redFlags.join("; ") || "insufficient edge"}.`,
+    red_flags: redFlags,
+  };
+}
+
+export async function generateIdeaReview(candidate: Dict, context: Dict): Promise<IdeaReview> {
+  if (context.force_fallback || !llmAvailable()) return fallbackIdeaReview(candidate);
+  try {
+    const system =
+      "You are a skeptical Indian-equity portfolio risk reviewer. Your job is to approve or reject a proposed trade idea. " +
+      "Use ONLY the supplied JSON. Do not add new facts. Reject marginal ideas. Prefer capital preservation. " +
+      'Respond ONLY as JSON: {"decision":"approve|reject|watch","approved":boolean,"confidence":0-1,"reason":string,"red_flags":[string]}';
+    const payload = {
+      candidate,
+      market_regime: context.market_regime,
+      performance_calibration: context.performance_calibration,
+      official_data_status: candidate.official_data?.data_sources,
+      followup_history: context.followups ? {
+        checked: context.followups.checked,
+        active_count: context.followups.active_count,
+        resolved_count: context.followups.resolved_count,
+        win_rate_pct: context.followups.win_rate_pct,
+      } : null,
+    };
+    let text = (await complete(SENTIMENT_MODEL, system, `REVIEW THIS CANDIDATE:\n${JSON.stringify(payload).slice(0, 8000)}`, 900)).trim();
+    if (text.startsWith("```")) {
+      text = text.replace(/^```/, "").replace(/```$/, "");
+      if (text.toLowerCase().startsWith("json")) text = text.slice(4);
+    }
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start === -1 || end === -1) return fallbackIdeaReview(candidate);
+    const parsed = JSON.parse(text.slice(start, end + 1)) as Dict;
+    const decision = ["approve", "reject", "watch"].includes(parsed.decision) ? parsed.decision : parsed.approved ? "approve" : "reject";
+    return {
+      approved: Boolean(parsed.approved) && decision === "approve",
+      confidence: Math.max(0, Math.min(1, Number(parsed.confidence ?? 0.5))),
+      decision,
+      reason: String(parsed.reason || ""),
+      red_flags: Array.isArray(parsed.red_flags) ? parsed.red_flags.map(String).slice(0, 6) : [],
+    };
+  } catch (err) {
+    console.warn(`Idea review failed for ${candidate.symbol}:`, err instanceof Error ? err.message : err);
+    return fallbackIdeaReview(candidate);
+  }
+}
+
 export async function generateStockDeepDiveMemo(payload: Dict): Promise<string> {
   try {
     const system =

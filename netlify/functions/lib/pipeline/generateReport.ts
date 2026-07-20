@@ -28,6 +28,7 @@ import { fetchRssNews, rssBySymbol, type RssItem } from "../connectors/rssNews.j
 import { fetchFmpFundamentals, type FmpFundamental } from "../connectors/fmp.js";
 import {
   scoreNewsBatch,
+  generateIdeaReview,
   generateIdeaRationale,
   generateReportNarrative,
   fallbackRationale,
@@ -36,8 +37,10 @@ import {
 } from "../llm/anthropic.js";
 import { loadUniverse, type UniverseRow } from "./universe.js";
 import { getAuthenticatedKiteClient } from "../kite/client.js";
+import { fetchOptionChain } from "../kite/optionChain.js";
 import { deliverReport } from "../delivery/deliverReport.js";
 import { createLifecycleRowsForIdeas, updateRecommendationLifecycle } from "./lifecycle.js";
+import { classifyMarketRegime, loadLatestFlows, loadOfficialData, loadPerformanceCalibration, type MarketRegime } from "./enrichment.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Dict = Record<string, any>;
@@ -163,6 +166,7 @@ function computeRawScores(
   snapshots: Dict[],
   macro: Record<string, MacroPoint>,
   infoCache: Record<string, Dict>,
+  fmpData: Record<string, FmpFundamental>,
   newsSentiment: Record<string, Dict>,
   universeBySym: Record<string, UniverseRow>,
   sectorBreadth: Record<string, number>,
@@ -170,6 +174,8 @@ function computeRawScores(
   peBy: Record<string, number[]>,
   pbBy: Record<string, number[]>,
   evBy: Record<string, number[]>,
+  officialData: Record<string, Dict>,
+  flows: { fiiNetCr: number | null; diiNetCr: number | null },
 ): Dict[] {
   const vix = macro.INDIAVIX?.last ?? null;
   const usdinrChg = macro.USDINR?.change_pct ?? null;
@@ -183,19 +189,25 @@ function computeRawScores(
   for (const snap of snapshots) {
     const symbol = snap.symbol;
     const info = infoCache[symbol] || {};
-    const fmpRow = null; // fmp is folded into info-scoring via fundamentals below
+    const fmpRow = fmpData[symbol] || null;
+    const official = officialData[symbol] || {};
     const sector = snap.sector;
     const uniRow = universeBySym[symbol] || {};
 
-    const { passes, rejects } = scoring.applyHardFilters(snap, uniRow, null, null, 50.0, 1.0);
+    const { passes, rejects } = scoring.applyHardFilters(snap, uniRow, official.bhav || null, null, 50.0, 1.0);
 
     const tech = scoring.scoreTechnical(snap);
     const fund = scoring.scoreFundamentals(info, (fmpRow as unknown) as Dict);
     const val = scoring.scoreValuation(info, (fmpRow as unknown) as Dict, peBy[sector] || [], pbBy[sector] || [], evBy[sector] || []);
-    const own = scoring.scoreOwnership(info, null, null, null, null);
+    const own = scoring.scoreOwnership(info, official.bhav || null, official.insider || null, flows.fiiNetCr, flows.diiNetCr);
     const an = scoring.scoreAnalyst(info, (fmpRow as unknown) as Dict);
     const ns = newsSentiment[symbol] || { avg_sentiment: 0.0, items: [] };
-    const news = scoring.scoreEventNews(ns.avg_sentiment ?? 0.0, (ns.items || []).length, null);
+    const eventSentimentBoost = Math.max(-0.4, Math.min(0.4, 0.12 * Number(official.positive_event_count || 0) - 0.18 * Number(official.risk_event_count || 0)));
+    const news = scoring.scoreEventNews(
+      Math.max(-1, Math.min(1, (ns.avg_sentiment ?? 0.0) + eventSentimentBoost)),
+      (ns.items || []).length + Number(official.positive_event_count || 0) + Number(official.risk_event_count || 0),
+      official.actions || null,
+    );
     const macroScore = scoring.scoreMacroSector(
       sector,
       sectorBreadth,
@@ -221,15 +233,18 @@ function computeRawScores(
     if ((snap.volatility_20 || 0) > 40) risks.push("Elevated volatility");
     if (info.debtToEquity && info.debtToEquity > 150) risks.push("High leverage");
     if (vix && vix > 20) risks.push("Elevated INDIAVIX");
+    if (official.earnings_in_days !== null && official.earnings_in_days !== undefined && official.earnings_in_days <= 7) {
+      risks.push(`Results/board meeting in ${official.earnings_in_days} days`);
+    }
+    if (official.risk_event_count > 0) risks.push("Recent exchange filing risk event");
 
-    out.push({ symbol, snap, info, passes, rejects, raw_sub: rawSub, reasons, risks });
+    out.push({ symbol, snap, info, official, earnings_in_days: official.earnings_in_days ?? null, next_earnings: official.next_earnings ?? null, passes, rejects, raw_sub: rawSub, reasons, risks });
   }
   return out;
 }
 
 async function buildScoreDocs(rawRows: Dict[], runDate: string, runId: string): Promise<Dict[]> {
-  // No cloud-safe earnings calendar -> no earnings penalty/exclusion (empty map).
-  const penalised = rawRows.map((row) => scoring.applyEarningsPenalty(row.raw_sub, null));
+  const penalised = rawRows.map((row) => scoring.applyEarningsPenalty(row.raw_sub, row.earnings_in_days ?? null));
   const normSubs = scoring.normalizeSubscoresUniverse(penalised);
   const nowIso = new Date().toISOString();
   const setupMap: Record<string, string> = {
@@ -269,6 +284,9 @@ async function buildScoreDocs(rawRows: Dict[], runDate: string, runId: string): 
       setup_type: setupMap[snap.setup || "neutral"] || "neutral",
       sector: snap.sector,
       name: snap.name,
+      official_data: row.official,
+      next_earnings: row.next_earnings,
+      earnings_in_days: row.earnings_in_days,
       // fields used downstream by _select_ideas but not columns in stock_scores:
       _last_close: snap.last_close,
       _passes_filters: row.passes,
@@ -304,12 +322,17 @@ function selectIdeas(
   scores: Dict[],
   snapshots: Dict[],
   runId: string,
+  hist: Record<string, OhlcvBar[]>,
+  regime: MarketRegime,
+  calibration: Dict,
 ): { weekly: Dict[]; monthly: Dict[]; excluded: Dict[]; relaxed: boolean } {
   const snapMap: Record<string, Dict> = {};
   for (const s of snapshots) snapMap[s.symbol] = s;
 
-  const qualifiesWeekly = (s: Dict) => s._passes_filters && s.conviction >= 72 && s.technical >= 70;
-  const qualifiesMonthly = (s: Dict) => s._passes_filters && s.conviction >= 75 && s.fundamental >= 70 && s.macro_sector >= 65;
+  const weeklyGate = 72 + regime.weeklyConvictionOffset + Number(calibration.thresholdOffset || 0);
+  const monthlyGate = 75 + regime.monthlyConvictionOffset + Number(calibration.thresholdOffset || 0);
+  const qualifiesWeekly = (s: Dict) => s._passes_filters && s.conviction >= weeklyGate && s.technical >= regime.minTechnical;
+  const qualifiesMonthly = (s: Dict) => s._passes_filters && s.conviction >= monthlyGate && s.fundamental >= regime.minFundamental && s.macro_sector >= 65;
 
   const weeklyQual: Dict[] = [];
   const monthlyQual: Dict[] = [];
@@ -322,7 +345,7 @@ function selectIdeas(
 
   const mk = (scoreDoc: Dict, horizon: string): Dict => {
     const snap = snapMap[scoreDoc.symbol] || {};
-    const levels = scoring.entryStopTarget(snap.last_close || 100.0, snap.atr_14 ?? null, scoreDoc.direction, horizon);
+    const levels = scoring.structureAwareEntryStopTarget(snap.last_close || 100.0, snap.atr_14 ?? null, scoreDoc.direction, horizon, hist[scoreDoc.symbol] || []);
     return {
       id: randomUUID(),
       report_run_id: runId,
@@ -336,6 +359,10 @@ function selectIdeas(
       ...levels,
       reasons: scoreDoc.reasons.slice(0, 6),
       risks: scoreDoc.risks.slice(0, 4),
+      official_data: scoreDoc.official_data,
+      next_earnings: scoreDoc.next_earnings,
+      earnings_in_days: scoreDoc.earnings_in_days,
+      market_regime: regime.label,
       sub_scores: {
         technical: scoreDoc.technical,
         fundamental: scoreDoc.fundamental,
@@ -397,6 +424,9 @@ function buildContext(
   weekly: Dict[],
   monthly: Dict[],
   universeCount: number,
+  marketRegime?: MarketRegime,
+  performanceCalibration?: Dict,
+  flows?: { fiiNetCr: number | null; diiNetCr: number | null },
 ): Dict {
   const sortedSectors = Object.entries(sectorBreadth).sort((a, b) => b[1] - a[1]);
   const bullish = sortedSectors.slice(0, 3).filter(([, v]) => v > 0).map(([s]) => s);
@@ -417,8 +447,10 @@ function buildContext(
     bearish_watch: bearish.map((s) => ({ symbol: s.symbol, conviction: s.conviction })),
     universe_count: universeCount,
     scored_count: scores.length,
-    fii_net_cr: null,
-    dii_net_cr: null,
+    fii_net_cr: flows?.fiiNetCr ?? null,
+    dii_net_cr: flows?.diiNetCr ?? null,
+    market_regime: marketRegime,
+    performance_calibration: performanceCalibration,
     commodity_impact: commoditySector,
     risks: [
       vix ? `INDIAVIX at ${vix.toFixed(1)}` : "Volatility regime",
@@ -426,6 +458,74 @@ function buildContext(
       "Global macro overhang",
     ],
   };
+}
+
+function analyseFnoChain(chain: Dict): Dict {
+  const calls = Array.isArray(chain.calls) ? chain.calls : [];
+  const puts = Array.isArray(chain.puts) ? chain.puts : [];
+  const totalCallOi = calls.reduce((s: number, c: Dict) => s + Number(c.oi || 0), 0);
+  const totalPutOi = puts.reduce((s: number, p: Dict) => s + Number(p.oi || 0), 0);
+  const byOi = (a: Dict, b: Dict) => Number(b.oi || 0) - Number(a.oi || 0);
+  const maxCall = [...calls].sort(byOi)[0] || {};
+  const maxPut = [...puts].sort(byOi)[0] || {};
+  const pcr = totalCallOi ? totalPutOi / totalCallOi : null;
+  return {
+    eligible: true,
+    source: chain.source || "kite",
+    underlying: chain.underlying,
+    nearest_expiry: chain.expiries?.[0] ?? null,
+    total_call_oi: totalCallOi,
+    total_put_oi: totalPutOi,
+    pcr,
+    max_oi_call_strike: maxCall.strike ?? null,
+    max_oi_put_strike: maxPut.strike ?? null,
+    bias: pcr == null ? "neutral" : pcr > 1.15 ? "bullish" : pcr < 0.85 ? "bearish" : "neutral",
+  };
+}
+
+async function attachFnoAnalytics(ideas: Dict[]): Promise<void> {
+  if (!ideas.length) return;
+  let kc;
+  try {
+    kc = await getAuthenticatedKiteClient();
+  } catch (err) {
+    for (const idea of ideas) idea.fno = { eligible: false, source: "kite", error: err instanceof Error ? err.message : String(err) };
+    return;
+  }
+  await Promise.all(ideas.map(async (idea) => {
+    const chain = await fetchOptionChain(kc, idea.symbol);
+    idea.fno = chain.eligible ? analyseFnoChain(chain as unknown as Dict) : { eligible: false, source: "kite", error: chain.error };
+    if (idea.fno.eligible && idea.fno.bias && idea.fno.bias !== "neutral") {
+      idea.reasons = [`F&O ${idea.fno.bias} PCR ${Number(idea.fno.pcr || 0).toFixed(2)}`, ...(idea.reasons || [])].slice(0, 6);
+    }
+  }));
+}
+
+async function applyFinalIdeaReview(
+  ideas: Dict[],
+  context: Dict,
+  skipLlm: boolean,
+): Promise<{ approved: Dict[]; rejected: Dict[] }> {
+  const approved: Dict[] = [];
+  const rejected: Dict[] = [];
+  for (const idea of ideas) {
+    const review = skipLlm
+      ? await generateIdeaReview(idea, { ...context, force_fallback: true })
+      : await generateIdeaReview(idea, context);
+    idea.ai_review = review;
+    if (review.approved) {
+      approved.push(idea);
+    } else {
+      rejected.push({
+        symbol: idea.symbol,
+        horizon: idea.horizon,
+        conviction: idea.conviction,
+        reason: review.reason,
+        red_flags: review.red_flags,
+      });
+    }
+  }
+  return { approved, rejected };
 }
 
 // ---------------------------------------------------------------------------
@@ -528,6 +628,8 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
     const shortlistUniverse = shortlisted;
     const infoCache = await fetchQuoteSummaryInfo(shortlistUniverse.map((u) => u.symbol));
     const fmpData = await fetchFmpFundamentals(shortlistUniverse.map((u) => u.symbol));
+    const officialData = await loadOfficialData(shortlistUniverse.map((u) => u.symbol));
+    const flows = await loadLatestFlows();
 
     const rssItems = await fetchRssNews(shortlistUniverse);
     const rssMap = rssBySymbol(rssItems);
@@ -537,9 +639,14 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
     // ---- STAGE 3: strict scoring + idea selection + narrative ----
     const t3 = Date.now();
     const { peBy, pbBy, evBy } = buildSectorPeerArrays(snapshots, universeBySym, infoCache, fmpData);
-    const rawRows = computeRawScores(snapshots, macro, infoCache, newsSentiment, universeBySym, sectorBreadth, commoditySector, peBy, pbBy, evBy);
+    const marketRegime = classifyMarketRegime(macro, niftySeries);
+    const performanceCalibration = await loadPerformanceCalibration();
+    const rawRows = computeRawScores(snapshots, macro, infoCache, fmpData, newsSentiment, universeBySym, sectorBreadth, commoditySector, peBy, pbBy, evBy, officialData, flows);
     const scores = await buildScoreDocs(rawRows, runDate, runId);
-    const { weekly, monthly, excluded, relaxed } = selectIdeas(scores, snapshots, runId);
+    const selected = selectIdeas(scores, snapshots, runId, hist, marketRegime, performanceCalibration);
+    let weekly = selected.weekly;
+    let monthly = selected.monthly;
+    const { excluded, relaxed } = selected;
     let followups: Dict = {
       checked: 0,
       active_count: 0,
@@ -564,8 +671,18 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
     }
     const stage3Seconds = round((Date.now() - t3) / 1000, 1);
 
-    // Rationales + narrative.
-    const ctxDraft = buildContext(runDate, runId, macro, scores, sectorBreadth, commoditySector, weekly, monthly, universe.length);
+    // AI final review + rationales + narrative.
+    const preReviewContext = buildContext(runDate, runId, macro, scores, sectorBreadth, commoditySector, weekly, monthly, universe.length, marketRegime, performanceCalibration, flows);
+    preReviewContext.followups = followups;
+    await attachFnoAnalytics([...weekly, ...monthly]);
+    const weeklyReview = await applyFinalIdeaReview(weekly, preReviewContext, skipLlm);
+    const monthlyReview = await applyFinalIdeaReview(monthly, preReviewContext, skipLlm);
+    weekly = weeklyReview.approved;
+    monthly = monthlyReview.approved;
+    const aiRejected = [...weeklyReview.rejected, ...monthlyReview.rejected];
+    const ctxDraft = buildContext(runDate, runId, macro, scores, sectorBreadth, commoditySector, weekly, monthly, universe.length, marketRegime, performanceCalibration, flows);
+    ctxDraft.followups = followups;
+    ctxDraft.ai_rejected_ideas = aiRejected;
     await attachRationales([...weekly, ...monthly], ctxDraft, skipLlm);
 
     if (weekly.length || monthly.length) {
@@ -622,19 +739,25 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
       no_idea_reason:
         weekly.length || monthly.length
           ? null
-          : scores.length === 0
+          : aiRejected.length
+            ? "Candidate ideas were found but rejected by AI/risk review."
+            : scores.length === 0
             ? "No stocks reached Stage 3 scoring. Check universe, OHLC, snapshot and shortlist counts."
             : "Stocks were scored, but neither strict nor fallback idea selection produced candidates.",
       excluded_by_earnings: excluded.length,
+      ai_rejected_ideas: aiRejected.length,
       kite_gate: Boolean(survivors),
+      market_regime: marketRegime.label,
+      calibration_offset: performanceCalibration.thresholdOffset || 0,
       total_seconds: round((Date.now() - tStart) / 1000, 1),
       stage1_seconds: stage1Seconds,
       stage2_seconds: stage2Seconds,
       stage3_seconds: stage3Seconds,
     };
-    const context = buildContext(runDate, runId, macro, scores, sectorBreadth, commoditySector, weekly, monthly, universe.length);
+    const context = buildContext(runDate, runId, macro, scores, sectorBreadth, commoditySector, weekly, monthly, universe.length, marketRegime, performanceCalibration, flows);
     context.funnel = funnelStats;
     context.followups = followups;
+    context.ai_rejected_ideas = aiRejected;
     const narrative = skipLlm ? fallbackNarrative(context) : await generateReportNarrative(context);
     context.narrative = narrative;
 

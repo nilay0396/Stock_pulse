@@ -151,6 +151,23 @@ The daily email, Telegram report, and in-app report preview include:
 Weekly ideas are tracked for 7 calendar days and monthly ideas for 30 calendar
 days unless target or stop is hit first.
 
+## Recommendation hardening
+
+The report pipeline now applies a stricter decision loop after raw scoring:
+
+```text
+Full-universe score -> official-data enrichment -> regime/calibration gates
+-> structure-aware entry/stop/target -> F&O context when available
+-> AI/risk reviewer -> persisted ideas
+```
+
+Official NSE/BSE tables already modeled in Supabase are consumed when present:
+`bhavcopy_rows`, `financial_results`, `corp_announcements`, `corp_actions`,
+`shareholding_filings`, `insider_trades`, and `fii_dii_flows`. These feeds
+affect hard filters, ownership/news scores, earnings-risk penalties and final
+review context. If a cloud run cannot populate NSE/BSE tables, the pipeline
+continues with neutral/fallback inputs rather than fabricating data.
+
 ## Scoring engine
 
 ```

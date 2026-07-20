@@ -682,6 +682,7 @@ export interface TradeLevels {
   target_low: number;
   target_high: number;
   risk_reward: number;
+  construction?: string;
 }
 
 function round2(x: number): number {
@@ -747,5 +748,88 @@ export function entryStopTarget(
     target_low: tLow,
     target_high: tHigh,
     risk_reward: minRr,
+  };
+}
+
+export interface LevelBar {
+  close: number;
+  high: number;
+  low: number;
+  volume?: number;
+}
+
+function quantile(values: number[], q: number): number | null {
+  const clean = values.filter((v) => Number.isFinite(v)).sort((a, b) => a - b);
+  if (!clean.length) return null;
+  const idx = Math.min(clean.length - 1, Math.max(0, Math.floor((clean.length - 1) * q)));
+  return clean[idx];
+}
+
+function rewardRisk(entry: number, stop: number, target: number, direction: string): number {
+  if (direction === "bearish") {
+    return round2((entry - target) / Math.max(0.01, stop - entry));
+  }
+  return round2((target - entry) / Math.max(0.01, entry - stop));
+}
+
+/**
+ * Decision-grade construction layer. Uses the existing ATR formula as a
+ * baseline, then anchors entries/stops/targets to recent price structure:
+ * support/resistance from 20-55 day swing zones and prior highs/lows.
+ */
+export function structureAwareEntryStopTarget(
+  last: number,
+  atrIn: number | null,
+  direction: "bullish" | "bearish" | string,
+  horizon: "weekly" | "monthly" | string,
+  bars: LevelBar[] = [],
+  minRr = 2.0,
+): TradeLevels {
+  const fallback = entryStopTarget(last, atrIn, direction, horizon, minRr);
+  const recent = bars.slice(-(horizon === "monthly" ? 90 : 45)).filter((b) => b.close && b.high && b.low);
+  if (recent.length < 20 || direction === "watch" || direction === "avoid") {
+    return { ...fallback, construction: "atr_fallback" };
+  }
+
+  const atr = atrIn || last * 0.02;
+  const lows20 = recent.slice(-20).map((b) => b.low);
+  const highs20 = recent.slice(-20).map((b) => b.high);
+  const lows55 = recent.slice(-55).map((b) => b.low);
+  const highs55 = recent.slice(-55).map((b) => b.high);
+  const support = Math.max(quantile(lows20, 0.2) ?? fallback.entry_low, quantile(lows55, 0.25) ?? fallback.entry_low);
+  const resistance = Math.min(quantile(highs20, 0.8) ?? fallback.target_low, quantile(highs55, 0.85) ?? fallback.target_high);
+
+  if (direction === "bearish") {
+    const entryHigh = round2(Math.min(last * 1.005, resistance + 0.15 * atr));
+    const entryLow = round2(Math.max(last * 0.985, entryHigh - 0.75 * atr));
+    const stop = round2(Math.max(fallback.stop_loss, resistance + 0.8 * atr));
+    const rawTarget = Math.min(fallback.target_high, support - 0.25 * atr);
+    const targetHigh = round2(Math.min(rawTarget, entryLow - minRr * Math.max(0.01, stop - entryHigh)));
+    const targetLow = round2(Math.min(fallback.target_low, targetHigh - atr));
+    return {
+      entry_low: entryLow,
+      entry_high: entryHigh,
+      stop_loss: stop,
+      target_low: targetLow,
+      target_high: targetHigh,
+      risk_reward: rewardRisk(entryHigh, stop, targetHigh, direction),
+      construction: "structure_swing",
+    };
+  }
+
+  const entryLow = round2(Math.max(last * 0.985, support - 0.15 * atr));
+  const entryHigh = round2(Math.min(last * 1.005, entryLow + 0.75 * atr));
+  const stop = round2(Math.min(fallback.stop_loss, support - 0.8 * atr));
+  const rawTarget = Math.max(fallback.target_low, resistance + 0.25 * atr);
+  const targetLow = round2(Math.max(rawTarget, entryHigh + minRr * Math.max(0.01, entryHigh - stop)));
+  const targetHigh = round2(Math.max(fallback.target_high, targetLow + atr));
+  return {
+    entry_low: entryLow,
+    entry_high: entryHigh,
+    stop_loss: stop,
+    target_low: targetLow,
+    target_high: targetHigh,
+    risk_reward: rewardRisk(entryHigh, stop, targetLow, direction),
+    construction: "structure_swing",
   };
 }
