@@ -129,7 +129,9 @@ function FollowupTable({ items, empty }) {
                 <div className="font-body text-[11px]" style={{ color: "var(--text-muted)" }}>{i.original_run_date} · {i.horizon}</div></td>
               <td><span className={statusBadge(i.status)}>{String(i.status || "").replace(/_/g, " ")}</span></td>
               <td className="numeric">{fmtRupee(i.current_price)}</td>
-              <td className="numeric" style={{ color: pctColor(i.return_pct) }}>{i.return_pct === null || i.return_pct === undefined ? "—" : fmtPct(i.return_pct)}</td>
+              <td className="numeric" style={{ color: pctColor(i.avg_return_pct ?? i.return_pct) }}>
+                {i.return_range_text || (i.return_pct === null || i.return_pct === undefined ? "—" : fmtPct(i.return_pct))}
+              </td>
               <td className="numeric">{fmtNum(i.days_active, 0)}</td>
               <td className="text-[12px]" style={{ minWidth: 260 }}>{i.ai_followup || i.status_note || "—"}</td>
             </tr>

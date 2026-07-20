@@ -302,6 +302,62 @@ function compact(row: LifecycleRow): Dict {
   };
 }
 
+function compactGrouped(rows: LifecycleRow[], mode: "active" | "resolved"): Dict[] {
+  const groups = new Map<string, LifecycleRow[]>();
+  for (const row of rows) {
+    const key = mode === "resolved" ? `${row.symbol}:${row.status}` : row.symbol;
+    const bucket = groups.get(key) || [];
+    bucket.push(row);
+    groups.set(key, bucket);
+  }
+
+  return [...groups.values()].map((bucket) => {
+    const sorted = [...bucket].sort((a, b) => {
+      const aAbs = Math.abs(Number(a.return_pct || 0));
+      const bAbs = Math.abs(Number(b.return_pct || 0));
+      if (bAbs !== aAbs) return bAbs - aAbs;
+      return String(b.original_run_date || "").localeCompare(String(a.original_run_date || ""));
+    });
+    const primary = sorted[0];
+    const returns = bucket
+      .map((row) => Number(row.return_pct))
+      .filter((value) => Number.isFinite(value));
+    const best = returns.length ? round(Math.max(...returns), 3) : null;
+    const worst = returns.length ? round(Math.min(...returns), 3) : null;
+    const avg = returns.length ? round(returns.reduce((sum, value) => sum + value, 0) / returns.length, 3) : null;
+    const dates = bucket.map((row) => row.original_run_date).filter(Boolean).sort();
+    const horizons = [...new Set(bucket.map((row) => row.horizon).filter(Boolean))].join(", ");
+    const statuses = [...new Set(bucket.map((row) => row.status).filter(Boolean))];
+    const status = mode === "active"
+      ? (statuses.includes("active") ? "active" : "pending_entry")
+      : primary.status;
+    const count = bucket.length;
+    const range = best === null || worst === null
+      ? null
+      : best === worst
+        ? `${best > 0 ? "+" : ""}${best}%`
+        : `${worst > 0 ? "+" : ""}${worst}% to ${best > 0 ? "+" : ""}${best}%`;
+
+    const action = mode === "active"
+      ? `${primary.symbol} remains ${status.replace(/_/g, " ")}. ${status === "active" ? "Hold only if the original thesis still stands" : "Keep on watch until entry triggers"}; tracked return ${range || "not available"}.`
+      : `${primary.symbol} resolved as ${status.replace(/_/g, " ")}; tracked return ${range || "not available"}.`;
+
+    return {
+      ...compact(primary),
+      status,
+      horizon: horizons || primary.horizon,
+      original_run_date: dates[0] || primary.original_run_date,
+      latest_run_date: dates[dates.length - 1] || primary.original_run_date,
+      recommendation_count: count,
+      best_return_pct: best,
+      worst_return_pct: worst,
+      avg_return_pct: avg,
+      return_range_text: range,
+      ai_followup: action,
+    };
+  });
+}
+
 export async function createLifecycleRowsForIdeas(ideas: Dict[], runDate: string): Promise<void> {
   if (!ideas.length) return;
   const rows = ideas.map((idea) => ({
@@ -354,7 +410,11 @@ export async function updateRecommendationLifecycle(): Promise<Dict> {
     hit_stop_count: resolved.filter((row) => row.status === "hit_stop").length,
     no_entry_count: resolved.filter((row) => row.status === "no_entry").length,
     win_rate_pct: entered.length ? round((positive.length / entered.length) * 100, 2) : null,
-    active: active.sort((a, b) => Math.abs(Number(b.return_pct || 0)) - Math.abs(Number(a.return_pct || 0))).slice(0, 25).map(compact),
-    resolved: resolved.sort((a, b) => Math.abs(Number(b.return_pct || 0)) - Math.abs(Number(a.return_pct || 0))).slice(0, 25).map(compact),
+    active: compactGrouped(active, "active")
+      .sort((a, b) => Math.abs(Number(b.worst_return_pct ?? b.return_pct ?? 0)) - Math.abs(Number(a.worst_return_pct ?? a.return_pct ?? 0)))
+      .slice(0, 25),
+    resolved: compactGrouped(resolved, "resolved")
+      .sort((a, b) => Math.abs(Number(b.worst_return_pct ?? b.return_pct ?? 0)) - Math.abs(Number(a.worst_return_pct ?? a.return_pct ?? 0)))
+      .slice(0, 25),
   };
 }

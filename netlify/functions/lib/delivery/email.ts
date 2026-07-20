@@ -28,13 +28,19 @@ function ideaRows(ideas: any[]): string {
   `).join("");
 }
 
+function followupReturn(item: any): string {
+  if (item.return_range_text) return String(item.return_range_text);
+  if (item.return_pct === null || item.return_pct === undefined) return "—";
+  return `${Number(item.return_pct) > 0 ? "+" : ""}${item.return_pct}%`;
+}
+
 function followupRows(items: any[]): string {
   return items.map((item) => `
     <tr>
       <td><strong>${esc(item.symbol)}</strong><br><span>${esc(item.horizon || item.sector || "")}</span></td>
       <td>${esc(item.status)}</td>
       <td>${esc(item.current_price)}</td>
-      <td>${item.return_pct === null || item.return_pct === undefined ? "—" : `${Number(item.return_pct) > 0 ? "+" : ""}${esc(item.return_pct)}%`}</td>
+      <td>${esc(followupReturn(item))}</td>
       <td>${esc(item.days_active)}</td>
       <td>${esc(item.ai_followup || item.status_note || "")}</td>
     </tr>
@@ -92,10 +98,10 @@ export function renderReportText(context: Record<string, any>): string {
     ...weekly.map((idea) => `${idea.symbol} ${idea.direction} conviction ${idea.conviction} entry ${idea.entry_low}-${idea.entry_high}`),
     "",
     "Active Follow-ups",
-    ...(active.length ? active.map((item: any) => `${item.symbol} ${item.status} current ${item.current_price} return ${item.return_pct ?? "—"}% - ${item.ai_followup || ""}`) : ["No active follow-ups yet."]),
+    ...(active.length ? active.map((item: any) => `${item.symbol} ${item.status} current ${item.current_price} return ${followupReturn(item)} - ${item.ai_followup || ""}`) : ["No active follow-ups yet."]),
     "",
     "Resolved Follow-ups",
-    ...(resolved.length ? resolved.map((item: any) => `${item.symbol} ${item.status} return ${item.return_pct ?? "—"}% - ${item.ai_followup || ""}`) : ["No recommendations resolved in this run."]),
+    ...(resolved.length ? resolved.map((item: any) => `${item.symbol} ${item.status} return ${followupReturn(item)} - ${item.ai_followup || ""}`) : ["No recommendations resolved in this run."]),
   ].join("\n");
 }
 

@@ -35,10 +35,11 @@ function returnText(value: unknown): string {
 }
 
 function followupLines(item: any): string[] {
+  const returnValue = item.return_range_text || returnText(item.return_pct);
   return [
     `<b>${escapeHtml(item.symbol)}</b>${item.name ? ` - ${escapeHtml(item.name)}` : ""}`,
     `Status: ${escapeHtml(item.status)}`,
-    `Current: ${escapeHtml(item.current_price ?? "—")} | Return: ${returnText(item.return_pct)}`,
+    `Current: ${escapeHtml(item.current_price ?? "—")} | Return: ${escapeHtml(returnValue)}`,
     `Days active: ${escapeHtml(item.days_active ?? 0)}`,
     escapeHtml(item.ai_followup || item.status_note || ""),
   ];
