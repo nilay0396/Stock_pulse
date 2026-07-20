@@ -39,8 +39,9 @@ import { loadUniverse, type UniverseRow } from "./universe.js";
 import { getAuthenticatedKiteClient } from "../kite/client.js";
 import { fetchOptionChain } from "../kite/optionChain.js";
 import { deliverReport } from "../delivery/deliverReport.js";
+import { sendOpsAlert } from "../delivery/opsAlert.js";
 import { createLifecycleRowsForIdeas, updateRecommendationLifecycle } from "./lifecycle.js";
-import { classifyMarketRegime, loadLatestFlows, loadOfficialData, loadPerformanceCalibration, type MarketRegime } from "./enrichment.js";
+import { calibrationAdjustment, classifyMarketRegime, loadLatestFlows, loadOfficialData, loadPerformanceCalibration, type MarketRegime } from "./enrichment.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Dict = Record<string, any>;
@@ -331,8 +332,12 @@ function selectIdeas(
 
   const weeklyGate = 72 + regime.weeklyConvictionOffset + Number(calibration.thresholdOffset || 0);
   const monthlyGate = 75 + regime.monthlyConvictionOffset + Number(calibration.thresholdOffset || 0);
-  const qualifiesWeekly = (s: Dict) => s._passes_filters && s.conviction >= weeklyGate && s.technical >= regime.minTechnical;
-  const qualifiesMonthly = (s: Dict) => s._passes_filters && s.conviction >= monthlyGate && s.fundamental >= regime.minFundamental && s.macro_sector >= 65;
+  const effectiveConviction = (s: Dict, horizon: "weekly" | "monthly") => {
+    const adjustment = calibrationAdjustment(calibration, { ...s, horizon }, regime.label);
+    return round(Number(s.conviction || 0) + adjustment, 2);
+  };
+  const qualifiesWeekly = (s: Dict) => s._passes_filters && effectiveConviction(s, "weekly") >= weeklyGate && s.technical >= regime.minTechnical;
+  const qualifiesMonthly = (s: Dict) => s._passes_filters && effectiveConviction(s, "monthly") >= monthlyGate && s.fundamental >= regime.minFundamental && s.macro_sector >= 65;
 
   const weeklyQual: Dict[] = [];
   const monthlyQual: Dict[] = [];
@@ -340,12 +345,13 @@ function selectIdeas(
     if (qualifiesWeekly(s)) weeklyQual.push(s);
     if (qualifiesMonthly(s)) monthlyQual.push(s);
   }
-  weeklyQual.sort((a, b) => b.conviction - a.conviction);
-  monthlyQual.sort((a, b) => b.conviction - a.conviction);
+  weeklyQual.sort((a, b) => effectiveConviction(b, "weekly") - effectiveConviction(a, "weekly"));
+  monthlyQual.sort((a, b) => effectiveConviction(b, "monthly") - effectiveConviction(a, "monthly"));
 
   const mk = (scoreDoc: Dict, horizon: string): Dict => {
     const snap = snapMap[scoreDoc.symbol] || {};
     const levels = scoring.structureAwareEntryStopTarget(snap.last_close || 100.0, snap.atr_14 ?? null, scoreDoc.direction, horizon, hist[scoreDoc.symbol] || []);
+    const performanceAdjustment = calibrationAdjustment(calibration, { ...scoreDoc, horizon }, regime.label);
     return {
       id: randomUUID(),
       report_run_id: runId,
@@ -356,6 +362,8 @@ function selectIdeas(
       horizon,
       setup_type: scoreDoc.setup_type,
       conviction: scoreDoc.conviction,
+      effective_conviction: round(Number(scoreDoc.conviction || 0) + performanceAdjustment, 2),
+      performance_adjustment: performanceAdjustment,
       ...levels,
       reasons: scoreDoc.reasons.slice(0, 6),
       risks: scoreDoc.risks.slice(0, 4),
@@ -465,10 +473,15 @@ function analyseFnoChain(chain: Dict): Dict {
   const puts = Array.isArray(chain.puts) ? chain.puts : [];
   const totalCallOi = calls.reduce((s: number, c: Dict) => s + Number(c.oi || 0), 0);
   const totalPutOi = puts.reduce((s: number, p: Dict) => s + Number(p.oi || 0), 0);
+  const callOiChange = calls.reduce((s: number, c: Dict) => s + Number(c.change_oi || 0), 0);
+  const putOiChange = puts.reduce((s: number, p: Dict) => s + Number(p.change_oi || 0), 0);
+  const ivs = [...calls, ...puts].map((c: Dict) => Number(c.iv)).filter((v: number) => Number.isFinite(v) && v > 0);
   const byOi = (a: Dict, b: Dict) => Number(b.oi || 0) - Number(a.oi || 0);
   const maxCall = [...calls].sort(byOi)[0] || {};
   const maxPut = [...puts].sort(byOi)[0] || {};
   const pcr = totalCallOi ? totalPutOi / totalCallOi : null;
+  const changePcr = callOiChange ? putOiChange / callOiChange : null;
+  const maxPain = maxCall.strike && maxPut.strike ? round((Number(maxCall.strike) + Number(maxPut.strike)) / 2, 2) : null;
   return {
     eligible: true,
     source: chain.source || "kite",
@@ -476,9 +489,14 @@ function analyseFnoChain(chain: Dict): Dict {
     nearest_expiry: chain.expiries?.[0] ?? null,
     total_call_oi: totalCallOi,
     total_put_oi: totalPutOi,
+    call_oi_change: callOiChange,
+    put_oi_change: putOiChange,
     pcr,
+    change_pcr: changePcr,
+    avg_iv: ivs.length ? round(ivs.reduce((s: number, v: number) => s + v, 0) / ivs.length, 2) : null,
     max_oi_call_strike: maxCall.strike ?? null,
     max_oi_put_strike: maxPut.strike ?? null,
+    max_pain_proxy: maxPain,
     bias: pcr == null ? "neutral" : pcr > 1.15 ? "bullish" : pcr < 0.85 ? "bearish" : "neutral",
   };
 }
@@ -497,6 +515,15 @@ async function attachFnoAnalytics(ideas: Dict[]): Promise<void> {
     idea.fno = chain.eligible ? analyseFnoChain(chain as unknown as Dict) : { eligible: false, source: "kite", error: chain.error };
     if (idea.fno.eligible && idea.fno.bias && idea.fno.bias !== "neutral") {
       idea.reasons = [`F&O ${idea.fno.bias} PCR ${Number(idea.fno.pcr || 0).toFixed(2)}`, ...(idea.reasons || [])].slice(0, 6);
+      if (idea.direction === "bullish" && idea.fno.bias === "bearish") {
+        idea.conviction = Math.max(0, round(Number(idea.conviction || 0) - 3, 2));
+        idea.risks = ["F&O OI/PCR bias conflicts with bullish setup", ...(idea.risks || [])].slice(0, 5);
+      } else if (idea.direction === "bearish" && idea.fno.bias === "bullish") {
+        idea.conviction = Math.max(0, round(Number(idea.conviction || 0) - 3, 2));
+        idea.risks = ["F&O OI/PCR bias conflicts with bearish setup", ...(idea.risks || [])].slice(0, 5);
+      } else if (idea.direction === idea.fno.bias) {
+        idea.conviction = Math.min(100, round(Number(idea.conviction || 0) + 1, 2));
+      }
     }
   }));
 }
@@ -799,8 +826,15 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
       try {
         const delivery = await deliverReport(runId);
         console.log("delivery result:", JSON.stringify(delivery));
+        if (delivery.failed > 0 || delivery.sent + delivery.dry_run === 0) {
+          await sendOpsAlert(
+            "Report delivery degraded",
+            `Run ${runId} completed, but delivery result was ${JSON.stringify(delivery)}.`,
+          );
+        }
       } catch (err) {
         console.warn("delivery warning:", err instanceof Error ? err.message : err);
+        await sendOpsAlert("Report delivery failed", `Run ${runId} succeeded but delivery failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -811,6 +845,7 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
       .from("report_runs")
       .update({ status: "failed", error: err instanceof Error ? err.message : String(err), finished_at: new Date().toISOString() })
       .eq("id", runId);
+    await sendOpsAlert("Report pipeline failed", `Run ${runId} failed: ${err instanceof Error ? err.stack || err.message : String(err)}`);
     return { id: runId, status: "failed", error: err instanceof Error ? err.message : String(err) };
   }
 }

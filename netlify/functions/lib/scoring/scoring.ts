@@ -752,6 +752,7 @@ export function entryStopTarget(
 }
 
 export interface LevelBar {
+  open?: number;
   close: number;
   high: number;
   low: number;
@@ -770,6 +771,39 @@ function rewardRisk(entry: number, stop: number, target: number, direction: stri
     return round2((entry - target) / Math.max(0.01, stop - entry));
   }
   return round2((target - entry) / Math.max(0.01, entry - stop));
+}
+
+function recentVwap(bars: LevelBar[]): number | null {
+  let pv = 0;
+  let vol = 0;
+  for (const b of bars) {
+    const v = Number(b.volume || 0);
+    if (!v || !b.high || !b.low || !b.close) continue;
+    const typical = (b.high + b.low + b.close) / 3;
+    pv += typical * v;
+    vol += v;
+  }
+  return vol ? pv / vol : null;
+}
+
+function recentGapZone(bars: LevelBar[], direction: string): { low: number; high: number } | null {
+  const recent = bars.slice(-35);
+  let best: { low: number; high: number; size: number } | null = null;
+  for (let i = 1; i < recent.length; i += 1) {
+    const prev = recent[i - 1];
+    const cur = recent[i];
+    if (!cur.open || !prev.close) continue;
+    const gapPct = ((cur.open - prev.close) / prev.close) * 100;
+    if (direction === "bullish" && gapPct > 1.2) {
+      const zone = { low: Math.min(prev.close, cur.open), high: Math.max(prev.close, cur.open), size: Math.abs(gapPct) };
+      if (!best || zone.size > best.size) best = zone;
+    }
+    if (direction === "bearish" && gapPct < -1.2) {
+      const zone = { low: Math.min(prev.close, cur.open), high: Math.max(prev.close, cur.open), size: Math.abs(gapPct) };
+      if (!best || zone.size > best.size) best = zone;
+    }
+  }
+  return best ? { low: best.low, high: best.high } : null;
 }
 
 /**
@@ -798,11 +832,20 @@ export function structureAwareEntryStopTarget(
   const highs55 = recent.slice(-55).map((b) => b.high);
   const support = Math.max(quantile(lows20, 0.2) ?? fallback.entry_low, quantile(lows55, 0.25) ?? fallback.entry_low);
   const resistance = Math.min(quantile(highs20, 0.8) ?? fallback.target_low, quantile(highs55, 0.85) ?? fallback.target_high);
+  const vwap = recentVwap(recent.slice(-20));
+  const gap = recentGapZone(recent, direction);
 
   if (direction === "bearish") {
-    const entryHigh = round2(Math.min(last * 1.005, resistance + 0.15 * atr));
-    const entryLow = round2(Math.max(last * 0.985, entryHigh - 0.75 * atr));
-    const stop = round2(Math.max(fallback.stop_loss, resistance + 0.8 * atr));
+    const entryAnchor = Math.min(
+      last * 1.005,
+      resistance + 0.15 * atr,
+      vwap ? Math.max(last * 0.99, vwap + 0.15 * atr) : last * 1.005,
+      gap ? gap.low + 0.25 * (gap.high - gap.low) : last * 1.005,
+    );
+    const entryHigh = round2(entryAnchor);
+    const entryLow = round2(Math.min(entryHigh, Math.max(last * 0.985, entryHigh - 0.75 * atr)));
+    const stopBase = Math.max(fallback.stop_loss, resistance + 0.8 * atr, gap ? gap.high + 0.35 * atr : 0);
+    const stop = round2(stopBase);
     const rawTarget = Math.min(fallback.target_high, support - 0.25 * atr);
     const targetHigh = round2(Math.min(rawTarget, entryLow - minRr * Math.max(0.01, stop - entryHigh)));
     const targetLow = round2(Math.min(fallback.target_low, targetHigh - atr));
@@ -813,13 +856,20 @@ export function structureAwareEntryStopTarget(
       target_low: targetLow,
       target_high: targetHigh,
       risk_reward: rewardRisk(entryHigh, stop, targetHigh, direction),
-      construction: "structure_swing",
+      construction: vwap || gap ? "structure_vwap_gap" : "structure_swing",
     };
   }
 
-  const entryLow = round2(Math.max(last * 0.985, support - 0.15 * atr));
-  const entryHigh = round2(Math.min(last * 1.005, entryLow + 0.75 * atr));
-  const stop = round2(Math.min(fallback.stop_loss, support - 0.8 * atr));
+  const entryAnchor = Math.max(
+    last * 0.985,
+    support - 0.15 * atr,
+    vwap ? Math.min(last * 1.005, vwap - 0.15 * atr) : last * 0.985,
+    gap ? gap.high - 0.25 * (gap.high - gap.low) : last * 0.985,
+  );
+  const entryLow = round2(entryAnchor);
+  const entryHigh = round2(Math.max(entryLow, Math.min(last * 1.005, entryLow + 0.75 * atr)));
+  const stopBase = Math.min(fallback.stop_loss, support - 0.8 * atr, gap ? gap.low - 0.35 * atr : Number.POSITIVE_INFINITY);
+  const stop = round2(stopBase);
   const rawTarget = Math.max(fallback.target_low, resistance + 0.25 * atr);
   const targetLow = round2(Math.max(rawTarget, entryHigh + minRr * Math.max(0.01, entryHigh - stop)));
   const targetHigh = round2(Math.max(fallback.target_high, targetLow + atr));
@@ -830,6 +880,6 @@ export function structureAwareEntryStopTarget(
     target_low: targetLow,
     target_high: targetHigh,
     risk_reward: rewardRisk(entryHigh, stop, targetLow, direction),
-    construction: "structure_swing",
+    construction: vwap || gap ? "structure_vwap_gap" : "structure_swing",
   };
 }

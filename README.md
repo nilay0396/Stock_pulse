@@ -181,6 +181,22 @@ Recommended Windows Task Scheduler timing: 08:40 IST and 12:40 IST, before the
 09:00/13:00 report runs. This runner is best-effort per feed; one blocked NSE
 endpoint does not stop the other feeds from loading.
 
+Optional Kite WebSocket streaming runs as a local/VM agent, not inside Netlify
+Functions. Run `supabase/migrations/0008_live_ticks.sql` first, then start:
+
+```powershell
+cd C:\Users\nilay\Downloads\Market-pulse-main\Market-pulse-main\netlify\functions
+$env:SUPABASE_URL="<your supabase url>"
+$env:SUPABASE_SERVICE_ROLE_KEY="<your service role key>"
+$env:KITE_API_KEY="<your kite api key>"
+$env:KITE_STREAM_SYMBOLS="RELIANCE,TCS,HDFCBANK,ICICIBANK,INFY,SBIN"
+npm.cmd run stream:kite
+```
+
+The agent stores latest ticks in `live_ticks`. Keep it on a home machine,
+small VPS, or always-on desktop session; serverless functions are not suitable
+for holding an all-day broker WebSocket.
+
 ## Scoring engine
 
 ```
@@ -253,9 +269,10 @@ Nginx proxies `/api/*` → backend and serves the React build from root.
 | Telegram delivery | **wired/live** | Bot token from @BotFather, chat IDs per user |
 | Gmail delivery   | **wired/live** | Gmail account + 16-char App Password (2FA enabled) |
 | LLM (sentiment + narrative) | **wired** | `ANTHROPIC_API_KEY` |
-| Official NSE snapshot feeds | **not wired** | Paid license. `yfinance` used as free fallback. |
+| Official NSE/BSE filings + delivery archives | **wired, best-effort** | Home-machine runner recommended when cloud IPs are blocked |
+| Kite WebSocket ticks | **wired as local agent** | Run `npm run stream:kite` outside Netlify |
 | Analyst consensus (fine-grained) | **not wired** | Refinitiv / Bloomberg / Tickertape API |
-| Corporate actions / events | **not wired** | Tickertape / Trendlyne / CMOTS |
+| Corporate actions / events | **wired from official tables** | Paid APIs can improve coverage/reliability |
 
 All the above can be plugged in by adding a new adapter under `backend/connectors/` and
 registering it. Business logic (scoring, ideas, report) will automatically consume the

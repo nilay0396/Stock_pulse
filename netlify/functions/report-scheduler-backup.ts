@@ -1,5 +1,6 @@
 import type { Handler } from "@netlify/functions";
 import { db } from "./lib/db.js";
+import { sendOpsAlert } from "./lib/delivery/opsAlert.js";
 import { dispatchWorkflow, githubWorkflowConfig, listRecentWorkflowRuns } from "./lib/githubWorkflow.js";
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
@@ -70,6 +71,7 @@ export const handler: Handler = async (event) => {
 
   const cfg = githubWorkflowConfig();
   if (!cfg.token) {
+    await sendOpsAlert("Backup scheduler misconfigured", "GITHUB_WORKFLOW_TOKEN is missing in Netlify env vars.");
     return json(500, { detail: "GitHub workflow dispatch is not configured. Add GITHUB_WORKFLOW_TOKEN in Netlify env vars." });
   }
 
@@ -136,7 +138,7 @@ export const handler: Handler = async (event) => {
     });
   } catch (err) {
     console.error("report-scheduler-backup failed", err);
+    await sendOpsAlert("Backup scheduler failed", err instanceof Error ? err.stack || err.message : String(err));
     return json(500, { detail: err instanceof Error ? err.message : "Backup scheduler failed" });
   }
 };
-

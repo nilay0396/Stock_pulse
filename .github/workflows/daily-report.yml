@@ -125,3 +125,19 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+
+      - name: Alert on workflow failure
+        if: failure()
+        run: |
+          if [ -z "$NETLIFY_SITE_URL" ] || [ -z "$REPORT_BACKUP_SECRET" ]; then
+            echo "Skipping failure alert: NETLIFY_SITE_URL or REPORT_BACKUP_SECRET is missing"
+            exit 0
+          fi
+          curl -sS -X POST "${NETLIFY_SITE_URL%/}/.netlify/functions/report-ops-alert" \
+            -H "content-type: application/json" \
+            -H "x-scheduler-secret: ${REPORT_BACKUP_SECRET}" \
+            --data "{\"subject\":\"GitHub workflow failed\",\"message\":\"Daily Report Pipeline failed for run ${GITHUB_RUN_ID}. ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
+            --max-time 30 || true
+        env:
+          NETLIFY_SITE_URL: ${{ secrets.NETLIFY_SITE_URL }}
+          REPORT_BACKUP_SECRET: ${{ secrets.REPORT_BACKUP_SECRET }}

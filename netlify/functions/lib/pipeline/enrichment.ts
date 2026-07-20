@@ -163,19 +163,68 @@ export function classifyMarketRegime(macro: Record<string, MacroPoint>, niftySer
 export async function loadPerformanceCalibration(): Promise<Dict> {
   const { data, error } = await db
     .from("recommendation_lifecycle")
-    .select("horizon, status, return_pct")
+    .select("trade_idea_id, sector, horizon, direction, status, return_pct")
     .in("status", ["hit_target", "hit_stop", "expired"])
-    .limit(500);
+    .limit(1000);
   if (error || !data?.length) return { sample: 0, thresholdOffset: 0, notes: ["No lifecycle history yet; calibration neutral."] };
   const closed = data || [];
+  const ideaIds = closed.map((r) => r.trade_idea_id).filter(Boolean);
+  const { data: ideas } = ideaIds.length
+    ? await db.from("trade_ideas").select("id,setup_type,market_regime,ai_review").in("id", ideaIds)
+    : { data: [] };
+  const ideaMap = new Map((ideas || []).map((i) => [i.id, i as Dict]));
   const avg = closed.reduce((s, r) => s + Number(r.return_pct || 0), 0) / closed.length;
   const hitRate = closed.filter((r) => Number(r.return_pct || 0) > 0).length / closed.length;
   const thresholdOffset = closed.length < 30 ? 1 : hitRate < 0.45 || avg < 0 ? 3 : hitRate > 0.58 && avg > 1 ? -1 : 0;
+
+  const buckets: Record<string, Dict[]> = {};
+  const add = (name: string, key: unknown, row: Dict) => {
+    const value = String(key || "Unknown");
+    (buckets[`${name}:${value}`] ||= []).push(row);
+  };
+  for (const row of closed as Dict[]) {
+    const idea = ideaMap.get(row.trade_idea_id) || {};
+    const confidence = Number(idea.ai_review?.confidence ?? 0);
+    add("sector", row.sector, row);
+    add("horizon", row.horizon, row);
+    add("direction", row.direction, row);
+    add("setup", idea.setup_type, row);
+    add("regime", idea.market_regime, row);
+    add("ai_confidence", confidence >= 0.75 ? "high" : confidence >= 0.55 ? "medium" : confidence > 0 ? "low" : "unknown", row);
+  }
+
+  const adjustments: Record<string, number> = {};
+  for (const [key, rows] of Object.entries(buckets)) {
+    if (rows.length < 5) continue;
+    const bucketAvg = rows.reduce((s, r) => s + Number(r.return_pct || 0), 0) / rows.length;
+    const bucketHit = rows.filter((r) => Number(r.return_pct || 0) > 0).length / rows.length;
+    const raw = bucketHit >= 0.62 && bucketAvg > 0.75 ? 2 : bucketHit >= 0.55 && bucketAvg > 0 ? 1 : bucketHit <= 0.42 || bucketAvg < -0.5 ? -2 : bucketHit < 0.48 || bucketAvg < 0 ? -1 : 0;
+    if (raw !== 0) adjustments[key] = raw;
+  }
+
   return {
     sample: closed.length,
     hit_rate_pct: Math.round(hitRate * 10000) / 100,
     avg_return_pct: Math.round(avg * 1000) / 1000,
     thresholdOffset,
+    adjustments,
     notes: [`Lifecycle calibration sample=${closed.length}, hit-rate=${Math.round(hitRate * 100)}%, avg=${Math.round(avg * 100) / 100}%.`],
   };
+}
+
+export function calibrationAdjustment(calibration: Dict, idea: Dict, regimeLabel: string): number {
+  const adjustments = calibration?.adjustments || {};
+  const review = idea.ai_review || {};
+  const confidence = Number(review.confidence ?? 0);
+  const confidenceBucket = confidence >= 0.75 ? "high" : confidence >= 0.55 ? "medium" : confidence > 0 ? "low" : "unknown";
+  const keys = [
+    `sector:${idea.sector || "Unknown"}`,
+    `horizon:${idea.horizon || "Unknown"}`,
+    `direction:${idea.direction || "Unknown"}`,
+    `setup:${idea.setup_type || "Unknown"}`,
+    `regime:${regimeLabel || "Unknown"}`,
+    `ai_confidence:${confidenceBucket}`,
+  ];
+  const total = keys.reduce((sum, key) => sum + Number(adjustments[key] || 0), 0);
+  return Math.max(-5, Math.min(5, total));
 }

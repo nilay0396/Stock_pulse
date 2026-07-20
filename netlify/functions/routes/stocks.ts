@@ -38,6 +38,18 @@ async function safe<T>(label: string, promise: Promise<T>, fallback: T, warnings
   }
 }
 
+async function latestLiveTick(symbol: string): Promise<Dict | null> {
+  const { data, error } = await db
+    .from("live_ticks")
+    .select("*")
+    .eq("symbol", symbol)
+    .order("received_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) return null;
+  return data || null;
+}
+
 async function stockMemoWithFallback(payload: Dict, skipLlm: boolean): Promise<{ text: string; source: "llm" | "fallback"; error?: string }> {
   const fallback = fallbackStockDeepDiveMemo(payload);
   if (skipLlm || !llmAvailable()) return { text: fallback, source: "fallback" };
@@ -386,7 +398,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
   if (universeError) return c.json({ detail: "Failed to load stock" }, 500);
   if (!universe) return c.json({ detail: "Stock not found" }, 404);
 
-  const [ohlcResult, fundamentalsMap, storedSnapshot, score, news, events, fno] = await Promise.all([
+  const [ohlcResult, fundamentalsMap, storedSnapshot, score, news, events, fno, liveTick] = await Promise.all([
     safe("ohlc", withTimeout("ohlc", stockOhlc(symbol, cfg.days, cfg.interval), 3500), { candles: [], source: "none", interval: cfg.interval } as { candles: Dict[]; source: "kite" | "yahoo" | "none"; interval: ChartInterval }, warnings),
     safe("fundamentals", withTimeout("fundamentals", fetchQuoteSummaryInfo([symbol]), 2200), {} as Record<string, Record<string, any>>, warnings),
     safe("stored_snapshot", latestSnapshot(symbol), null, warnings),
@@ -394,6 +406,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
     safe("news", withTimeout("news", stockNews(symbol, 25, universe), 2200), [] as Dict[], warnings),
     safe("events", withTimeout("events", stockEvents(symbol), 1500), { next_earnings: null, announcements: [], actions: [] }, warnings),
     safe("fno", withTimeout("fno", stockFno(symbol), 1800), { eligible: false, source: "none", providers_tried: [{ provider: "kite", error: "Timed out or unavailable" }] }, warnings),
+    safe("live_tick", latestLiveTick(symbol), null, warnings),
   ]);
 
   const ohlc = aggregateMonthly ? aggregateMonthlyCandles(ohlcResult.candles) : ohlcResult.candles;
@@ -403,7 +416,16 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
       low: b.low,
       volume: b.volume,
     }))) : {}), {}, warnings);
-  const technicals = { ...(storedSnapshot || {}), ...computedSnapshot };
+  const technicals = {
+    ...(storedSnapshot || {}),
+    ...computedSnapshot,
+    ...(liveTick?.last_price ? {
+      last_close: liveTick.last_price,
+      change_pct_1d: liveTick.change_pct ?? computedSnapshot.change_pct_1d,
+      live_received_at: liveTick.received_at,
+      live_source: liveTick.source,
+    } : {}),
+  };
   const fundamentals = (fundamentalsMap as Record<string, Record<string, any>>)[symbol] || {};
   const sector = universe.sector === "Other" && fundamentals.sector ? fundamentals.sector : universe.sector;
   const industry = universe.industry === "Unknown" && fundamentals.industry ? fundamentals.industry : universe.industry;
@@ -442,6 +464,7 @@ stocksRoutes.post("/:symbol/deep-dive", requireUser, async (c) => {
     sentiment: { avg_sentiment: 0, items: news.map((n) => ({ title: n.title, sentiment: n.sentiment ?? 0, category: n.category || "other" })) },
     events,
     fno,
+    live_tick: liveTick,
     ai_summary: memo.text,
     ai_memo_source: memo.source,
     ai_memo_error: memo.error || null,
