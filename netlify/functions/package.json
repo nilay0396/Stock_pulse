@@ -28,7 +28,8 @@
     "typescript": "^5.7.2"
   },
   "scripts": {
-    "bundle": "esbuild api.ts kite-token-refresh.ts kite-callback.ts kite-instruments-refresh.ts report-scheduler-backup.ts --bundle --platform=node --format=esm --target=node20 --outdir=../functions-dist --out-extension:.js=.mjs"
+    "bundle": "esbuild api.ts kite-token-refresh.ts kite-callback.ts kite-instruments-refresh.ts report-scheduler-backup.ts --bundle --platform=node --format=esm --target=node20 --outdir=../functions-dist --out-extension:.js=.mjs",
+    "ingest:official": "tsx ingest/official-data.ts"
   },
   "overrides": {
     "serialize-javascript": "^7.0.5"

@@ -38,6 +38,47 @@ export interface OptionChain {
   error: string | null;
 }
 
+async function previousOi(
+  symbol: string,
+  expiry: string,
+  strike: number,
+  side: "CE" | "PE",
+): Promise<number | null> {
+  const { data } = await db
+    .from("fno_oi_snapshots")
+    .select("oi")
+    .eq("symbol", symbol.toUpperCase())
+    .eq("expiry", expiry)
+    .eq("strike", strike)
+    .eq("side", side)
+    .order("fetched_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.oi === null || data?.oi === undefined ? null : Number(data.oi);
+}
+
+async function persistOiSnapshots(chain: OptionChain): Promise<void> {
+  if (!chain.eligible || !chain.expiries.length) return;
+  const expiry = chain.expiries[0];
+  const rows = [...chain.calls, ...chain.puts].map((c) => ({
+    symbol: chain.symbol,
+    expiry,
+    strike: c.strike,
+    side: c.side,
+    oi: c.oi,
+    change_oi: c.change_oi,
+    ltp: c.ltp,
+    volume: c.volume,
+    iv: c.iv,
+    underlying: chain.underlying,
+    source: chain.source,
+    fetched_at: chain.fetched_at,
+  }));
+  if (!rows.length) return;
+  const { error } = await db.from("fno_oi_snapshots").insert(rows);
+  if (error) console.warn("fno_oi_snapshots insert warning:", error.message);
+}
+
 function toDateOnly(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -111,11 +152,13 @@ export async function fetchOptionChain(kc: Connect, underlying: string): Promise
     const puts: NormalizedContract[] = [];
     for (const c of contracts) {
       const q = quotes[`${c.exchange}:${c.tradingsymbol}`];
+      const oi = q?.oi ?? null;
+      const prevOi = oi === null ? null : await previousOi(underlying, expiry, c.strike, c.instrument_type);
       const contract: NormalizedContract = {
         strike: c.strike,
         expiry,
-        oi: q?.oi ?? null,
-        change_oi: null,
+        oi,
+        change_oi: oi === null || prevOi === null ? null : oi - prevOi,
         ltp: q?.last_price ?? null,
         volume: q?.volume ?? null,
         iv: null,
@@ -135,7 +178,7 @@ export async function fetchOptionChain(kc: Connect, underlying: string): Promise
       underlyingPrice = null;
     }
 
-    return {
+    const chain = {
       symbol: underlying.toUpperCase(),
       eligible: true,
       source: "kite",
@@ -146,6 +189,8 @@ export async function fetchOptionChain(kc: Connect, underlying: string): Promise
       puts,
       error: null,
     };
+    await persistOiSnapshots(chain);
+    return chain;
   } catch (err) {
     return emptyChain(underlying, fetchedAt, err instanceof Error ? err.message : String(err));
   }

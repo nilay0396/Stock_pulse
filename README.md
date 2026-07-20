@@ -168,6 +168,21 @@ affect hard filters, ownership/news scores, earnings-risk penalties and final
 review context. If a cloud run cannot populate NSE/BSE tables, the pipeline
 continues with neutral/fallback inputs rather than fabricating data.
 
+Run official-data ingestion from a residential/home machine before the report
+cron when NSE/BSE blocks cloud IPs:
+
+```powershell
+cd C:\Users\nilay\Downloads\Market-pulse-main\Market-pulse-main\netlify\functions
+$env:SUPABASE_URL="<your supabase url>"
+$env:SUPABASE_SERVICE_ROLE_KEY="<your service role key>"
+$env:OFFICIAL_INGEST_DAYS="7"
+npm.cmd run ingest:official
+```
+
+Recommended Windows Task Scheduler timing: 08:40 IST and 12:40 IST, before the
+09:00/13:00 report runs. This runner is best-effort per feed; one blocked NSE
+endpoint does not stop the other feeds from loading.
+
 ## Scoring engine
 
 ```

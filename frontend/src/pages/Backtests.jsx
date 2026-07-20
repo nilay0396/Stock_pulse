@@ -25,18 +25,21 @@ export default function Backtests() {
   const [runs, setRuns] = useState([]);
   const [selectedReport, setSelectedReport] = useState("");
   const [selectedRun, setSelectedRun] = useState(null);
+  const [performance, setPerformance] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
 
   async function load() {
     setLoading(true);
     try {
-      const [reportsRes, runsRes] = await Promise.all([
+      const [reportsRes, runsRes, perfRes] = await Promise.all([
         api.get("/reports/history", { params: { limit: 50 } }),
         api.get("/backtests/runs", { params: { limit: 50 } }),
+        api.get("/ideas/performance"),
       ]);
       setReports(reportsRes.data || []);
       setRuns(runsRes.data || []);
+      setPerformance(perfRes.data || null);
       if (!selectedReport && reportsRes.data?.[0]?.id) setSelectedReport(reportsRes.data[0].id);
       if (!selectedRun && runsRes.data?.[0]?.id) await openRun(runsRes.data[0].id);
     } finally {
@@ -113,6 +116,30 @@ export default function Backtests() {
         <Stat label="Targets" value={summary.targets ?? 0} />
         <Stat label="No Data" value={summary.no_data ?? 0} />
       </div>
+
+      <section className="panel p-5" data-testid="recommendation-performance">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <div className="overline">Live Recommendation Performance</div>
+            <div className="font-heading text-xl mt-1">Lifecycle Outcomes</div>
+          </div>
+          <div className="font-mono text-[11px]" style={{ color: "var(--text-muted)" }}>
+            {performance?.closed || 0} closed of {performance?.total || 0} resolved samples
+          </div>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mt-4">
+          <Stat label="Hit Rate" value={pct(performance?.hit_rate_pct)} />
+          <Stat label="Avg Return" value={pct(performance?.avg_return_pct)} />
+          <Stat label="Targets" value={performance?.hit_target || 0} />
+          <Stat label="Stops" value={performance?.hit_stop || 0} />
+          <Stat label="No Entry" value={performance?.no_entry || 0} />
+        </div>
+        <div className="grid md:grid-cols-3 gap-4 mt-4">
+          <PerfBucket title="By Horizon" rows={performance?.by_horizon || []} />
+          <PerfBucket title="By Direction" rows={performance?.by_direction || []} />
+          <PerfBucket title="Top Sectors" rows={(performance?.by_sector || []).slice(0, 8)} />
+        </div>
+      </section>
 
       <div className="grid lg:grid-cols-[320px_1fr] gap-4">
         <div className="panel overflow-hidden">
@@ -191,6 +218,25 @@ export default function Backtests() {
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function PerfBucket({ title, rows }) {
+  return (
+    <div className="panel-elevated p-4">
+      <div className="overline mb-3">{title}</div>
+      <div className="flex flex-col gap-2">
+        {rows.map((row) => (
+          <div key={row.name} className="flex items-center justify-between gap-3 text-[12px]">
+            <span>{row.name}</span>
+            <span className="font-mono text-right">
+              {row.count} · {pct(row.hit_rate_pct)} · {pct(row.avg_return_pct)}
+            </span>
+          </div>
+        ))}
+        {!rows.length && <div className="text-[12px]" style={{ color: "var(--text-muted)" }}>No closed lifecycle data yet.</div>}
       </div>
     </div>
   );
