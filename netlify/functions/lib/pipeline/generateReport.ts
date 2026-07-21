@@ -33,7 +33,9 @@ import {
   generateReportNarrative,
   fallbackRationale,
   fallbackNarrative,
+  getLlmUsage,
   llmAvailable,
+  resetLlmUsage,
 } from "../llm/anthropic.js";
 import { loadUniverse, type UniverseRow } from "./universe.js";
 import { getAuthenticatedKiteClient } from "../kite/client.js";
@@ -560,6 +562,7 @@ async function applyFinalIdeaReview(
 // ---------------------------------------------------------------------------
 export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
   const skipLlm = opts.skipLlm ?? false;
+  resetLlmUsage();
   const triggeredBy = opts.triggeredBy ?? "github-actions";
   const runDate = todayIstStr();
   const runId = randomUUID();
@@ -783,6 +786,7 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
       kite_gate: Boolean(survivors),
       market_regime: marketRegime.label,
       calibration_offset: performanceCalibration.thresholdOffset || 0,
+      llm_usage: getLlmUsage(),
       total_seconds: round((Date.now() - tStart) / 1000, 1),
       stage1_seconds: stage1Seconds,
       stage2_seconds: stage2Seconds,
@@ -793,6 +797,7 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
     context.followups = followups;
     context.ai_rejected_ideas = aiRejected;
     const narrative = skipLlm ? fallbackNarrative(context) : await generateReportNarrative(context);
+    funnelStats.llm_usage = getLlmUsage();
     context.narrative = narrative;
 
     // Persist report_runs. `summary` carries the sub-keys the read routes

@@ -14,6 +14,40 @@ const SENTIMENT_MODEL = "claude-haiku-4-5";
 const NARRATIVE_MODEL = "claude-opus-4-8";
 
 let client: Anthropic | null = null;
+type LlmUsage = {
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  by_model: Record<string, { calls: number; input_tokens: number; output_tokens: number }>;
+};
+
+const usage: LlmUsage = { calls: 0, input_tokens: 0, output_tokens: 0, by_model: {} };
+
+export function resetLlmUsage(): void {
+  usage.calls = 0;
+  usage.input_tokens = 0;
+  usage.output_tokens = 0;
+  usage.by_model = {};
+}
+
+export function getLlmUsage(): LlmUsage {
+  return JSON.parse(JSON.stringify(usage)) as LlmUsage;
+}
+
+function recordUsage(model: string, res: unknown): void {
+  const u = (res as { usage?: { input_tokens?: number; output_tokens?: number } }).usage || {};
+  const input = Number(u.input_tokens || 0);
+  const output = Number(u.output_tokens || 0);
+  usage.calls += 1;
+  usage.input_tokens += input;
+  usage.output_tokens += output;
+  const bucket = usage.by_model[model] || { calls: 0, input_tokens: 0, output_tokens: 0 };
+  bucket.calls += 1;
+  bucket.input_tokens += input;
+  bucket.output_tokens += output;
+  usage.by_model[model] = bucket;
+}
+
 function getClient(): Anthropic {
   if (client) return client;
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -33,6 +67,7 @@ async function complete(model: string, system: string, prompt: string, maxTokens
     system,
     messages: [{ role: "user", content: prompt }],
   });
+  recordUsage(model, res);
   const textBlock = res.content.find((b) => b.type === "text");
   return textBlock && textBlock.type === "text" ? textBlock.text : "";
 }

@@ -29,6 +29,7 @@
   },
   "scripts": {
     "bundle": "esbuild api.ts kite-token-refresh.ts kite-callback.ts kite-instruments-refresh.ts report-scheduler-backup.ts report-ops-alert.ts --bundle --platform=node --format=esm --target=node20 --outdir=../functions-dist --out-extension:.js=.mjs",
+    "test": "tsx --test \"tests/**/*.test.ts\"",
     "ingest:official": "tsx ingest/official-data.ts",
     "stream:kite": "tsx agents/kite-websocket-agent.ts"
   },

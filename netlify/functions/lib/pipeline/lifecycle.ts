@@ -9,7 +9,7 @@ const ACTIVE_STATUSES = new Set(["active", "pending_entry", "target_1_hit", "tra
 const FINAL_STATUSES = new Set(["hit_target", "hit_stop", "hit_trailing_stop", "expired", "no_entry", "no_data", "error"]);
 const FINAL_STATUS_FILTER = '("hit_target","hit_stop","hit_trailing_stop","expired","no_entry","no_data","error")';
 
-type LifecycleRow = {
+export type LifecycleRow = {
   id: string;
   trade_idea_id: string;
   report_run_id: string;
@@ -51,13 +51,13 @@ function asNumber(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function calendarDaysSince(dateOnly: string, now = new Date()): number {
+export function calendarDaysSince(dateOnly: string, now = new Date()): number {
   const start = new Date(`${dateOnly}T00:00:00Z`).getTime();
   if (!Number.isFinite(start)) return 0;
   return Math.max(0, Math.floor((now.getTime() - start) / 86400000));
 }
 
-function signedReturnPct(direction: string, entry: number, exit: number): number {
+export function signedReturnPct(direction: string, entry: number, exit: number): number {
   if (!entry || !exit) return 0;
   const raw = ((exit - entry) / entry) * 100;
   return round(direction === "bearish" ? -raw : raw, 3);
@@ -88,7 +88,7 @@ function followupText(row: LifecycleRow): string {
   return `${sym} follow-up needs manual review.`;
 }
 
-function evaluateLifecycle(row: LifecycleRow, bars: DatedOhlcvBar[], now = new Date()): LifecycleRow {
+export function evaluateLifecycle(row: LifecycleRow, bars: DatedOhlcvBar[], now = new Date()): LifecycleRow {
   const direction = row.direction || "bullish";
   const entryLow = asNumber(row.entry_low);
   const entryHigh = asNumber(row.entry_high);

@@ -14,18 +14,20 @@ export default function AdminSettings() {
   const [discovering, setDiscovering] = useState(false);
   const [botInfo, setBotInfo] = useState(null);
   const [universeStats, setUniverseStats] = useState(null);
+  const [freshness, setFreshness] = useState(null);
   const [reseedingUniverse, setReseedingUniverse] = useState(false);
   const [loadError, setLoadError] = useState("");
 
   const load = async () => {
     setLoadError("");
     try {
-      const [a, sc, u] = await Promise.all([
+      const [a, sc, u, f] = await Promise.all([
         api.get("/admin/settings"),
         api.get("/admin/scheduler"),
         api.get("/stocks/universe/stats").catch(() => ({ data: { total: 0, curated: 0, other: 0 } })),
+        api.get("/admin/data-freshness").catch(() => ({ data: null })),
       ]);
-      setS(a.data); setSched(sc.data); setUniverseStats(u.data);
+      setS(a.data); setSched(sc.data); setUniverseStats(u.data); setFreshness(f.data);
     } catch (e) {
       const detail = e?.response?.data?.detail || e?.message || "Failed to load settings";
       setLoadError(detail);
@@ -123,6 +125,18 @@ export default function AdminSettings() {
   };
 
   if (!s) return <div className="p-8 font-mono text-[12px]" style={{ color: "var(--text-muted)" }}>Loading…</div>;
+
+  const statusColor = (status) => {
+    if (status === "fresh") return "var(--bullish)";
+    if (status === "optional_empty") return "var(--text-muted)";
+    return "var(--bearish)";
+  };
+  const ageText = (minutes) => {
+    if (minutes === null || minutes === undefined) return "-";
+    if (minutes < 90) return `${minutes}m`;
+    if (minutes < 2880) return `${Math.round(minutes / 60)}h`;
+    return `${Math.round(minutes / 1440)}d`;
+  };
 
   return (
     <div className="p-6 md:p-8 flex flex-col gap-5 max-w-4xl">
@@ -318,6 +332,40 @@ export default function AdminSettings() {
           <span className="text-[11px] font-mono" style={{ color: "var(--text-muted)" }}>
             Pulls EQUITY_L.csv from nsearchives.nseindia.com — preserves curated sector tags.
           </span>
+        </div>
+      </section>
+
+      <section className="panel p-5 flex flex-col gap-4" data-testid="settings-data-freshness">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="overline">Data Freshness</div>
+            <div className="text-[11px] font-mono mt-1" style={{ color: "var(--text-muted)" }}>
+              Status: {freshness?.status || "-"} - Checked: {fmtDate(freshness?.as_of)}
+            </div>
+          </div>
+          <button className="btn btn-outline" onClick={load} data-testid="settings-freshness-refresh">
+            <Search size={14} /> Refresh
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full data-table">
+            <thead><tr><th>Status</th><th>Source</th><th>Category</th><th>Rows</th><th>Latest</th><th>Age</th></tr></thead>
+            <tbody>
+              {(freshness?.rows || []).map((row) => (
+                <tr key={row.key}>
+                  <td className="font-body text-[12px]" style={{ color: statusColor(row.status) }}>{row.status}</td>
+                  <td className="font-bold">{row.label}</td>
+                  <td className="font-body text-[12px]">{row.category}</td>
+                  <td className="numeric">{row.rows || 0}</td>
+                  <td>{fmtDate(row.latest_at)}</td>
+                  <td className="font-mono text-[12px]">{ageText(row.age_minutes)}</td>
+                </tr>
+              ))}
+              {!freshness?.rows?.length && (
+                <tr><td colSpan={6} className="text-center py-4" style={{ color: "var(--text-muted)" }}>Freshness unavailable locally.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </section>
 
