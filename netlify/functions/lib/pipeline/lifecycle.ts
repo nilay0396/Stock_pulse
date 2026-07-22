@@ -414,9 +414,16 @@ function compactGrouped(rows: LifecycleRow[], mode: "active" | "resolved"): Dict
         ? `${best > 0 ? "+" : ""}${best}%`
         : `${worst > 0 ? "+" : ""}${worst}% to ${best > 0 ? "+" : ""}${best}%`;
 
-    const action = mode === "active"
-      ? `${primary.symbol} remains ${status.replace(/_/g, " ")}. ${status === "active" ? "Hold only if the original thesis still stands" : "Keep on watch until entry triggers"}; tracked return ${range || "not available"}.`
-      : `${primary.symbol} resolved as ${status.replace(/_/g, " ")}; tracked return ${range || "not available"}.`;
+    let action = `${primary.symbol} resolved as ${status.replace(/_/g, " ")}; tracked return ${range || "not available"}.`;
+    if (mode === "active") {
+      if (status === "pending_entry") {
+        action = `${primary.symbol} is still waiting for entry. Do not chase; act only if price trades inside the original entry zone.`;
+      } else if (status === "target_1_hit" || status === "trailing") {
+        action = `${primary.symbol} has hit target 1. Partial profit is booked; manage only the balance above trailing stop ${primary.trailing_stop ?? "not set"}.`;
+      } else {
+        action = `${primary.symbol} is active after entry. Manage against stop ${primary.stop_loss ?? "not set"} and targets ${primary.target_low ?? "not set"}-${primary.target_high ?? "not set"}.`;
+      }
+    }
 
     return {
       ...compact(primary),
