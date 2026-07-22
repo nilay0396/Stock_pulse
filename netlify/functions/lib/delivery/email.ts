@@ -66,17 +66,24 @@ function followupReturn(item: any): string {
 }
 
 function ideaRows(ideas: any[]): string {
-  return ideas.map((idea) => `
+  return ideas.map((idea) => {
+    const conviction = idea.effective_conviction ?? idea.horizon_conviction ?? idea.conviction ?? "-";
+    const dataScore = Number(idea.data_confidence_score);
+    const dataText = Number.isFinite(dataScore)
+      ? `Data ${dataScore}/100${idea.data_gaps?.length ? `; missing ${idea.data_gaps.slice(0, 2).join(", ")}` : ""}`
+      : "";
+    return `
     <tr>
       <td><strong>${esc(idea.symbol)}</strong><br><span>${esc(idea.name || idea.sector || "")}</span></td>
       <td>New ${esc(idea.horizon || "trade")} setup<br><span>${esc(idea.direction || "watch")}</span></td>
-      <td>${esc(idea.conviction ?? "-")}<br><span>R:R ${esc(idea.risk_reward ?? "-")}</span></td>
+      <td>${esc(conviction)}<br><span>R:R ${esc(idea.risk_reward ?? "-")}${idea.fno_score !== undefined ? ` | F&O ${esc(idea.fno_score)}/100` : ""}</span><br><span>${esc(dataText)}</span></td>
       <td>${esc(range(idea.entry_low, idea.entry_high))}</td>
       <td>${esc(money(idea.stop_loss))}</td>
       <td>T1 ${esc(money(idea.target_low))}<br>T2 ${esc(money(idea.target_high))}</td>
       <td>${esc((idea.rationale || "").replace(/\s+/g, " ").slice(0, 260))}</td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
 }
 
 function activeRows(items: any[]): string {

@@ -238,14 +238,19 @@ function fallbackIdeaReview(candidate: Dict): IdeaReview {
   const rr = Number(candidate.risk_reward || 0);
   const sub = candidate.sub_scores || {};
   const risks = candidate.risks || [];
+  const effectiveConviction = Number(candidate.effective_conviction ?? candidate.horizon_conviction ?? candidate.conviction ?? 0);
+  const dataConfidence = Number(candidate.data_confidence_score ?? 100);
   if (rr && rr < 1.8) redFlags.push(`Reward-risk too low (${rr})`);
   if (Number(sub.technical || 50) < 65 && candidate.horizon === "weekly") redFlags.push("Weekly technical score below reviewer comfort");
   if (Number(sub.fundamental || 50) < 62 && candidate.horizon === "monthly") redFlags.push("Monthly fundamental score below reviewer comfort");
+  if (dataConfidence < (candidate.horizon === "monthly" ? 82 : 78)) redFlags.push(`Data confidence too low (${dataConfidence}/100)`);
+  if (candidate.horizon === "monthly" && (candidate.data_gaps || []).includes("fundamentals missing")) redFlags.push("Monthly idea lacks fundamentals");
+  if (Number(sub.fno ?? 50) < 42) redFlags.push("F&O confirmation conflicts with setup");
   if (risks.some((r: string) => /earnings|results|high leverage|elevated volatility/i.test(r))) redFlags.push("Material risk flag present");
   if (candidate.earnings_in_days !== null && candidate.earnings_in_days !== undefined && candidate.earnings_in_days <= 7) {
     redFlags.push(`Earnings/results event in ${candidate.earnings_in_days} days`);
   }
-  const approved = redFlags.length === 0 && Number(candidate.conviction || 0) >= (candidate.horizon === "monthly" ? 75 : 72);
+  const approved = redFlags.length === 0 && effectiveConviction >= (candidate.horizon === "monthly" ? 75 : 72);
   return {
     approved,
     confidence: approved ? 0.64 : 0.72,

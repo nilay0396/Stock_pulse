@@ -241,7 +241,30 @@ function computeRawScores(
     }
     if (official.risk_event_count > 0) risks.push("Recent exchange filing risk event");
 
-    out.push({ symbol, snap, info, official, earnings_in_days: official.earnings_in_days ?? null, next_earnings: official.next_earnings ?? null, passes, rejects, raw_sub: rawSub, reasons, risks });
+    const dataConfidence = scoring.assessDataConfidence({
+      snapshot: snap,
+      info,
+      fmp: (fmpRow as unknown) as Dict,
+      official,
+      flows,
+      newsItems: (ns.items || []).length,
+    });
+    for (const gap of dataConfidence.gaps.slice(0, 4)) risks.push(`Data gap: ${gap}`);
+
+    out.push({
+      symbol,
+      snap,
+      info,
+      official,
+      earnings_in_days: official.earnings_in_days ?? null,
+      next_earnings: official.next_earnings ?? null,
+      passes,
+      rejects,
+      raw_sub: rawSub,
+      reasons,
+      risks,
+      data_confidence: dataConfidence,
+    });
   }
   return out;
 }
@@ -265,8 +288,11 @@ async function buildScoreDocs(rawRows: Dict[], runDate: string, runId: string): 
     const norm = normSubs[i];
     const snap = row.snap;
     const conv = scoring.finalConviction(norm);
+    const weeklyConviction = scoring.finalConvictionForHorizon(norm, "weekly", { dataPenalty: row.data_confidence?.penalty ?? 0 });
+    const monthlyConviction = scoring.finalConvictionForHorizon(norm, "monthly", { dataPenalty: row.data_confidence?.penalty ?? 0 });
     let [direction] = scoring.classifyTrade(conv, norm.technical ?? 50, norm.fundamental ?? 50, norm.macro_sector ?? 50);
     if (!row.passes) direction = "avoid";
+    if (row.data_confidence?.blockers?.includes("technical history incomplete")) direction = "avoid";
 
     const doc = {
       id: randomUUID(),
@@ -281,6 +307,12 @@ async function buildScoreDocs(rawRows: Dict[], runDate: string, runId: string): 
       event_news: round(norm.event_news ?? 50, 2),
       macro_sector: round(norm.macro_sector ?? 50, 2),
       conviction: conv,
+      weekly_conviction: weeklyConviction,
+      monthly_conviction: monthlyConviction,
+      data_confidence_score: row.data_confidence?.score ?? 100,
+      data_penalty: row.data_confidence?.penalty ?? 0,
+      data_gaps: row.data_confidence?.gaps || [],
+      data_blockers: row.data_confidence?.blockers || [],
       direction,
       reasons: row.reasons.slice(0, 10),
       risks: row.risks.slice(0, 6),
@@ -293,6 +325,7 @@ async function buildScoreDocs(rawRows: Dict[], runDate: string, runId: string): 
       // fields used downstream by _select_ideas but not columns in stock_scores:
       _last_close: snap.last_close,
       _passes_filters: row.passes,
+      _data_confidence: row.data_confidence,
     };
     out.push(doc);
     rows.push({
@@ -308,6 +341,11 @@ async function buildScoreDocs(rawRows: Dict[], runDate: string, runId: string): 
       event_news: doc.event_news,
       macro_sector: doc.macro_sector,
       conviction: doc.conviction,
+      weekly_conviction: doc.weekly_conviction,
+      monthly_conviction: doc.monthly_conviction,
+      data_confidence_score: doc.data_confidence_score,
+      data_penalty: doc.data_penalty,
+      data_gaps: doc.data_gaps,
       direction: doc.direction,
       reasons: doc.reasons,
       risks: doc.risks,
@@ -336,10 +374,24 @@ function selectIdeas(
   const monthlyGate = 75 + regime.monthlyConvictionOffset + Number(calibration.thresholdOffset || 0);
   const effectiveConviction = (s: Dict, horizon: "weekly" | "monthly") => {
     const adjustment = calibrationAdjustment(calibration, { ...s, horizon }, regime.label);
-    return round(Number(s.conviction || 0) + adjustment, 2);
+    const base = horizon === "monthly" ? s.monthly_conviction : s.weekly_conviction;
+    return round(Number(base ?? s.conviction ?? 0) + adjustment, 2);
   };
-  const qualifiesWeekly = (s: Dict) => s._passes_filters && effectiveConviction(s, "weekly") >= weeklyGate && s.technical >= regime.minTechnical;
-  const qualifiesMonthly = (s: Dict) => s._passes_filters && effectiveConviction(s, "monthly") >= monthlyGate && s.fundamental >= regime.minFundamental && s.macro_sector >= 65;
+  const hasBlocker = (s: Dict, blocker: string) => (s.data_blockers || s._data_confidence?.blockers || []).includes(blocker);
+  const qualifiesWeekly = (s: Dict) =>
+    s._passes_filters &&
+    !hasBlocker(s, "technical history incomplete") &&
+    effectiveConviction(s, "weekly") >= weeklyGate &&
+    s.technical >= regime.minTechnical &&
+    Number(s.data_confidence_score ?? 100) >= 78;
+  const qualifiesMonthly = (s: Dict) =>
+    s._passes_filters &&
+    !hasBlocker(s, "technical history incomplete") &&
+    !hasBlocker(s, "fundamentals missing") &&
+    effectiveConviction(s, "monthly") >= monthlyGate &&
+    s.fundamental >= regime.minFundamental &&
+    s.macro_sector >= 65 &&
+    Number(s.data_confidence_score ?? 100) >= 82;
 
   const weeklyQual: Dict[] = [];
   const monthlyQual: Dict[] = [];
@@ -365,7 +417,11 @@ function selectIdeas(
       setup_type: scoreDoc.setup_type,
       conviction: scoreDoc.conviction,
       effective_conviction: round(Number(scoreDoc.conviction || 0) + performanceAdjustment, 2),
+      horizon_conviction: horizon === "monthly" ? scoreDoc.monthly_conviction : scoreDoc.weekly_conviction,
       performance_adjustment: performanceAdjustment,
+      data_confidence_score: scoreDoc.data_confidence_score,
+      data_penalty: scoreDoc.data_penalty,
+      data_gaps: scoreDoc.data_gaps || [],
       ...levels,
       reasons: scoreDoc.reasons.slice(0, 6),
       risks: scoreDoc.risks.slice(0, 4),
@@ -503,6 +559,24 @@ function analyseFnoChain(chain: Dict): Dict {
   };
 }
 
+function fnoConfirmationScore(fno: Dict, direction: string): number {
+  if (!fno?.eligible) return 50;
+  const pcr = Number(fno.pcr);
+  const changePcr = Number(fno.change_pcr);
+  const iv = Number(fno.avg_iv);
+  let score = 50;
+  if (Number.isFinite(pcr)) {
+    if (direction === "bullish") score += pcr > 1.15 ? 18 : pcr < 0.85 ? -18 : 0;
+    if (direction === "bearish") score += pcr < 0.85 ? 18 : pcr > 1.15 ? -18 : 0;
+  }
+  if (Number.isFinite(changePcr)) {
+    if (direction === "bullish") score += changePcr > 1.05 ? 8 : changePcr < 0.9 ? -8 : 0;
+    if (direction === "bearish") score += changePcr < 0.9 ? 8 : changePcr > 1.05 ? -8 : 0;
+  }
+  if (Number.isFinite(iv) && iv > 45) score -= 4;
+  return Math.max(0, Math.min(100, round(score, 2)));
+}
+
 async function attachFnoAnalytics(ideas: Dict[]): Promise<void> {
   if (!ideas.length) return;
   let kc;
@@ -515,16 +589,27 @@ async function attachFnoAnalytics(ideas: Dict[]): Promise<void> {
   await Promise.all(ideas.map(async (idea) => {
     const chain = await fetchOptionChain(kc, idea.symbol);
     idea.fno = chain.eligible ? analyseFnoChain(chain as unknown as Dict) : { eligible: false, source: "kite", error: chain.error };
+    const fnoScore = fnoConfirmationScore(idea.fno, idea.direction);
+    idea.fno_score = fnoScore;
+    idea.sub_scores = { ...(idea.sub_scores || {}), fno: fnoScore };
+    idea.horizon_conviction = scoring.finalConvictionForHorizon(idea.sub_scores, idea.horizon === "monthly" ? "monthly" : "weekly", {
+      fnoScore,
+      dataPenalty: idea.data_penalty ?? 0,
+    });
+    idea.effective_conviction = round(Number(idea.horizon_conviction || idea.conviction || 0) + Number(idea.performance_adjustment || 0), 2);
     if (idea.fno.eligible && idea.fno.bias && idea.fno.bias !== "neutral") {
       idea.reasons = [`F&O ${idea.fno.bias} PCR ${Number(idea.fno.pcr || 0).toFixed(2)}`, ...(idea.reasons || [])].slice(0, 6);
       if (idea.direction === "bullish" && idea.fno.bias === "bearish") {
         idea.conviction = Math.max(0, round(Number(idea.conviction || 0) - 3, 2));
+        idea.effective_conviction = Math.max(0, round(Number(idea.effective_conviction || 0) - 3, 2));
         idea.risks = ["F&O OI/PCR bias conflicts with bullish setup", ...(idea.risks || [])].slice(0, 5);
       } else if (idea.direction === "bearish" && idea.fno.bias === "bullish") {
         idea.conviction = Math.max(0, round(Number(idea.conviction || 0) - 3, 2));
+        idea.effective_conviction = Math.max(0, round(Number(idea.effective_conviction || 0) - 3, 2));
         idea.risks = ["F&O OI/PCR bias conflicts with bearish setup", ...(idea.risks || [])].slice(0, 5);
       } else if (idea.direction === idea.fno.bias) {
         idea.conviction = Math.min(100, round(Number(idea.conviction || 0) + 1, 2));
+        idea.effective_conviction = Math.min(100, round(Number(idea.effective_conviction || 0) + 1, 2));
       }
     }
   }));
@@ -726,6 +811,8 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
         horizon: x.horizon,
         setup_type: x.setup_type,
         conviction: x.conviction,
+        horizon_conviction: x.horizon_conviction,
+        effective_conviction: x.effective_conviction,
         entry_low: x.entry_low,
         entry_high: x.entry_high,
         stop_loss: x.stop_loss,
@@ -736,6 +823,10 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
         market_regime: x.market_regime,
         next_earnings: x.next_earnings,
         earnings_in_days: x.earnings_in_days,
+        data_confidence_score: x.data_confidence_score,
+        data_penalty: x.data_penalty,
+        data_gaps: x.data_gaps || [],
+        fno_score: x.fno_score,
         ai_review: x.ai_review || {},
         fno: x.fno || {},
         reasons: x.reasons,

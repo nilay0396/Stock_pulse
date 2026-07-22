@@ -65,10 +65,16 @@ function macroLine(context: Record<string, any>): string {
 }
 
 function ideaLines(idea: any): string[] {
+  const conviction = idea.effective_conviction ?? idea.horizon_conviction ?? idea.conviction ?? "-";
+  const dataScore = Number(idea.data_confidence_score);
+  const dataLine = Number.isFinite(dataScore)
+    ? `Data quality: ${dataScore}/100${idea.data_gaps?.length ? ` | Missing: ${escapeHtml(idea.data_gaps.slice(0, 2).join(", "))}` : ""}`
+    : "";
   return [
     `<b>${escapeHtml(idea.symbol)}</b>${idea.name ? ` - ${escapeHtml(idea.name)}` : ""}`,
     `Action: New ${escapeHtml(idea.horizon || "trade")} setup (${escapeHtml(idea.direction || "watch")})`,
-    `Conviction: ${escapeHtml(idea.conviction ?? "-")} | R:R ${escapeHtml(idea.risk_reward ?? "-")}`,
+    `Conviction: ${escapeHtml(conviction)} | R:R ${escapeHtml(idea.risk_reward ?? "-")}${idea.fno_score !== undefined ? ` | F&O ${escapeHtml(idea.fno_score)}/100` : ""}`,
+    dataLine,
     `Entry zone: ${escapeHtml(range(idea.entry_low, idea.entry_high))}`,
     `Stop: ${escapeHtml(money(idea.stop_loss))}`,
     `Target 1: ${escapeHtml(money(idea.target_low))} | Target 2: ${escapeHtml(money(idea.target_high))}`,

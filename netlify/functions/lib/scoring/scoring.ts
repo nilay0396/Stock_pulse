@@ -24,6 +24,7 @@ export const FINAL_WEIGHTS = {
 } as const;
 
 export type SubScoreKey = keyof typeof FINAL_WEIGHTS;
+export type HorizonScoreKey = SubScoreKey | "fno";
 
 const TECHNICAL_WEIGHTS = { TR: 20, MO: 15, RSI: 15, BB: 10, MACD: 10, VOL: 10, ATR: 10, REL: 10 };
 const FUND_WEIGHTS = { GR: 20, PR: 15, CF: 15, DE: 10, IC: 10, RO: 10, MG: 10, BS: 10 };
@@ -607,6 +608,98 @@ export function finalConviction(sub: Partial<Record<SubScoreKey, number>>): numb
     0,
   );
   return Math.round(total * 100) / 100;
+}
+
+const WEEKLY_WEIGHTS: Record<HorizonScoreKey, number> = {
+  technical: 0.28,
+  fundamental: 0.14,
+  valuation: 0.07,
+  ownership: 0.12,
+  analyst: 0.03,
+  event_news: 0.16,
+  macro_sector: 0.15,
+  fno: 0.05,
+};
+
+const MONTHLY_WEIGHTS: Record<HorizonScoreKey, number> = {
+  technical: 0.14,
+  fundamental: 0.28,
+  valuation: 0.14,
+  ownership: 0.14,
+  analyst: 0.03,
+  event_news: 0.10,
+  macro_sector: 0.14,
+  fno: 0.03,
+};
+
+export interface DataConfidence {
+  score: number;
+  penalty: number;
+  gaps: string[];
+  blockers: string[];
+}
+
+export function finalConvictionForHorizon(
+  sub: Partial<Record<SubScoreKey, number>>,
+  horizon: "weekly" | "monthly",
+  opts: { fnoScore?: number | null; dataPenalty?: number | null } = {},
+): number {
+  const weights = horizon === "monthly" ? MONTHLY_WEIGHTS : WEEKLY_WEIGHTS;
+  const weighted = (Object.keys(weights) as HorizonScoreKey[]).reduce((sum, k) => {
+    const value = k === "fno" ? opts.fnoScore ?? 50 : sub[k] ?? 50;
+    return sum + weights[k] * value;
+  }, 0);
+  return Math.round(clip(weighted - Number(opts.dataPenalty || 0)) * 100) / 100;
+}
+
+export function assessDataConfidence(input: {
+  snapshot?: Dict | null;
+  info?: Dict | null;
+  fmp?: Dict | null;
+  official?: Dict | null;
+  flows?: { fiiNetCr: number | null; diiNetCr: number | null } | null;
+  newsItems?: number;
+}): DataConfidence {
+  const gaps: string[] = [];
+  const blockers: string[] = [];
+  let penalty = 0;
+  const info = input.info || {};
+  const fmp = input.fmp || {};
+  const official = input.official || {};
+  const sources = official.data_sources || {};
+  const add = (gap: string, points: number, blocker = false) => {
+    gaps.push(gap);
+    penalty += points;
+    if (blocker) blockers.push(gap);
+  };
+
+  if (!input.snapshot?.last_close || !input.snapshot?.rsi_14 || !input.snapshot?.atr_14) add("technical history incomplete", 8, true);
+  const hasFundamentals = [
+    info.revenueGrowth,
+    info.earningsGrowth,
+    info.returnOnEquity,
+    info.debtToEquity,
+    info.profitMargins,
+    fmp.ratios_ttm,
+    fmp.metrics_ttm,
+  ].some((v) => v !== null && v !== undefined);
+  if (!hasFundamentals) add("fundamentals missing", 7, true);
+  if (info.trailingPE === null || info.trailingPE === undefined) add("valuation PE missing", 2);
+  if (!sources.bhavcopy) add("NSE delivery/bhavcopy missing", 3);
+  if (!sources.shareholding) add("shareholding pattern missing", 3);
+  if (!sources.insider) add("insider/promoter trades missing", 2);
+  if (!sources.announcements) add("exchange announcements missing", 2);
+  if (!sources.financial_results && !official.next_earnings) add("earnings/results calendar missing", 3);
+  if (input.flows?.fiiNetCr === null || input.flows?.fiiNetCr === undefined) add("FII flow missing", 1);
+  if (input.flows?.diiNetCr === null || input.flows?.diiNetCr === undefined) add("DII flow missing", 1);
+  if (!input.newsItems) add("fresh stock news missing", 1);
+
+  return {
+    score: Math.round(clip(100 - penalty) * 100) / 100,
+    penalty: Math.round(penalty * 100) / 100,
+    gaps,
+    blockers,
+  };
 }
 
 export type TradeDirection = "avoid" | "bullish" | "bearish" | "watch";
