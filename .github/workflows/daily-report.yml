@@ -1,13 +1,10 @@
 name: Daily Report Pipeline
 
 # Runs the Market Pulse report-generation pipeline outside Netlify's function
-# timeout. 09:00 and 13:00 IST daily, plus manual dispatch. See
-# netlify/functions/pipeline/run.ts.
+# timeout. Scheduled starts are handled by the external cron hitting
+# report-scheduler-backup; GitHub keeps only manual dispatch here to avoid
+# delayed native schedule duplicates. See netlify/functions/pipeline/run.ts.
 on:
-  schedule:
-    # 03:30 UTC = 09:00 IST, 07:30 UTC = 13:00 IST (no DST).
-    - cron: "30 3 * * *"
-    - cron: "30 7 * * *"
   workflow_dispatch:
     inputs:
       skip_llm:
