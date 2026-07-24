@@ -237,7 +237,7 @@ function PerfBucket({ title, rows }) {
           <div key={row.name} className="flex items-center justify-between gap-3 text-[12px]">
             <span>{row.name}</span>
             <span className="font-mono text-right">
-              {row.count} · {pct(row.hit_rate_pct)} · {pct(row.avg_return_pct)}
+              {row.count} - {pct(row.hit_rate_pct)} - {pct(row.avg_return_pct)}
             </span>
           </div>
         ))}
@@ -256,7 +256,7 @@ function AttributionBucket({ title, rows }) {
           <div key={row.key} className="flex items-center justify-between gap-3 text-[12px]">
             <span title={row.label}>{row.label}</span>
             <span className="font-mono text-right" style={{ color: Number(row.avg_weight || 0) >= 0 ? "var(--bullish)" : "var(--bearish)" }}>
-              {row.count} Â· {Number(row.avg_weight || 0).toFixed(2)} Â· {pct(row.avg_return_pct)}
+              {row.count} - {Number(row.avg_weight || 0).toFixed(2)} - {pct(row.avg_return_pct)}
             </span>
           </div>
         ))}
