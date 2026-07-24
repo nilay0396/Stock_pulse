@@ -44,6 +44,7 @@ import { deliverReport } from "../delivery/deliverReport.js";
 import { sendOpsAlert } from "../delivery/opsAlert.js";
 import { createLifecycleRowsForIdeas, updateRecommendationLifecycle } from "./lifecycle.js";
 import { calibrationAdjustment, classifyMarketRegime, loadLatestFlows, loadOfficialData, loadPerformanceCalibration, type MarketRegime } from "./enrichment.js";
+import { updateRecommendationAttributions } from "./attribution.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Dict = Record<string, any>;
@@ -772,6 +773,14 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
     try {
       followups = await updateRecommendationLifecycle();
       console.log(`lifecycle | checked=${followups.checked || 0} active=${followups.active_count || 0} resolved=${followups.resolved_count || 0}`);
+      try {
+        followups.attribution = await updateRecommendationAttributions();
+        console.log(`attribution | upserted=${followups.attribution.upserted || 0} profit=${followups.attribution.profit_count || 0} loss=${followups.attribution.loss_count || 0}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn("attribution warning:", message);
+        followups.attribution_error = message;
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn("lifecycle warning:", message);

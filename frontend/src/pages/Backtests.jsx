@@ -141,6 +141,8 @@ export default function Backtests() {
           <PerfBucket title="By Setup" rows={performance?.by_setup || []} />
           <PerfBucket title="By Regime" rows={performance?.by_market_regime || []} />
           <PerfBucket title="AI Confidence" rows={performance?.by_ai_confidence || []} />
+          <AttributionBucket title="Profit Factors" rows={performance?.top_profit_factors || []} />
+          <AttributionBucket title="Loss Factors" rows={performance?.top_loss_factors || []} />
         </div>
       </section>
 
@@ -240,6 +242,25 @@ function PerfBucket({ title, rows }) {
           </div>
         ))}
         {!rows.length && <div className="text-[12px]" style={{ color: "var(--text-muted)" }}>No closed lifecycle data yet.</div>}
+      </div>
+    </div>
+  );
+}
+
+function AttributionBucket({ title, rows }) {
+  return (
+    <div className="panel-elevated p-4">
+      <div className="overline mb-3">{title}</div>
+      <div className="flex flex-col gap-2">
+        {rows.map((row) => (
+          <div key={row.key} className="flex items-center justify-between gap-3 text-[12px]">
+            <span title={row.label}>{row.label}</span>
+            <span className="font-mono text-right" style={{ color: Number(row.avg_weight || 0) >= 0 ? "var(--bullish)" : "var(--bearish)" }}>
+              {row.count} Â· {Number(row.avg_weight || 0).toFixed(2)} Â· {pct(row.avg_return_pct)}
+            </span>
+          </div>
+        ))}
+        {!rows.length && <div className="text-[12px]" style={{ color: "var(--text-muted)" }}>No attribution sample yet.</div>}
       </div>
     </div>
   );

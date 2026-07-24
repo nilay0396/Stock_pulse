@@ -1,5 +1,6 @@
 import { db } from "../db.js";
 import type { MacroPoint } from "../market/yahoo.js";
+import { summarizeAttributionFactors } from "./attribution.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Dict = Record<string, any>;
@@ -22,6 +23,15 @@ function daysUntil(value: unknown): number | null {
   if (t === null) return null;
   const now = new Date(`${todayIst()}T00:00:00Z`).getTime();
   return Math.ceil((t - now) / 86400000);
+}
+
+function attributionToken(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
 }
 
 function isPositiveAnnouncement(text: string): boolean {
@@ -202,13 +212,34 @@ export async function loadPerformanceCalibration(): Promise<Dict> {
     if (raw !== 0) adjustments[key] = raw;
   }
 
+  const { data: attributionRows, error: attributionError } = await db
+    .from("recommendation_attributions")
+    .select("profit_loss,return_pct,factor_attributions")
+    .limit(1000);
+  const factorSummary = attributionError ? [] : summarizeAttributionFactors(attributionRows || [], 4);
+  for (const item of factorSummary) {
+    const key = String(item.key || "");
+    const avgWeight = Number(item.avg_weight || 0);
+    const count = Number(item.count || 0);
+    if (!key || count < 4) continue;
+    const raw = avgWeight >= 1.2 ? 2 : avgWeight >= 0.45 ? 1 : avgWeight <= -1.2 ? -2 : avgWeight <= -0.45 ? -1 : 0;
+    if (raw !== 0) adjustments[key] = Math.max(-2, Math.min(2, raw));
+  }
+
   return {
     sample: closed.length,
     hit_rate_pct: Math.round(hitRate * 10000) / 100,
     avg_return_pct: Math.round(avg * 1000) / 1000,
     thresholdOffset,
     adjustments,
-    notes: [`Lifecycle calibration sample=${closed.length}, hit-rate=${Math.round(hitRate * 100)}%, avg=${Math.round(avg * 100) / 100}%.`],
+    attribution_sample: attributionRows?.length || 0,
+    attribution_factors: factorSummary.slice(0, 20),
+    notes: [
+      `Lifecycle calibration sample=${closed.length}, hit-rate=${Math.round(hitRate * 100)}%, avg=${Math.round(avg * 100) / 100}%.`,
+      attributionError
+        ? `Attribution calibration unavailable: ${attributionError.message}.`
+        : `Attribution factors=${factorSummary.length}.`,
+    ],
   };
 }
 
@@ -224,6 +255,8 @@ export function calibrationAdjustment(calibration: Dict, idea: Dict, regimeLabel
     `setup:${idea.setup_type || "Unknown"}`,
     `regime:${regimeLabel || "Unknown"}`,
     `ai_confidence:${confidenceBucket}`,
+    ...(Array.isArray(idea.reasons) ? idea.reasons.slice(0, 6).map((reason: unknown) => `reason:${attributionToken(reason)}`) : []),
+    ...(Array.isArray(idea.risks) ? idea.risks.slice(0, 4).map((risk: unknown) => `risk:${attributionToken(risk)}`) : []),
   ];
   const total = keys.reduce((sum, key) => sum + Number(adjustments[key] || 0), 0);
   return Math.max(-5, Math.min(5, total));

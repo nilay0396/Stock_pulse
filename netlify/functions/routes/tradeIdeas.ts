@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../lib/db.js";
 import { requireUser, type PublicUser } from "../lib/auth.js";
+import { summarizeAttributionFactors } from "../lib/pipeline/attribution.js";
 
 type Variables = { user: PublicUser };
 export const tradeIdeasRoutes = new Hono<{ Variables: Variables }>();
@@ -110,6 +111,12 @@ tradeIdeasRoutes.get("/performance", requireUser, async (c) => {
     }).sort((a, b) => b.count - a.count);
   };
 
+  const { data: attributionRows } = await db
+    .from("recommendation_attributions")
+    .select("profit_loss,return_pct,factor_attributions")
+    .limit(1000);
+  const attributionFactors = summarizeAttributionFactors(attributionRows || [], 3);
+
   return c.json({
     total: rows.length,
     closed: closed.length,
@@ -126,6 +133,9 @@ tradeIdeasRoutes.get("/performance", requireUser, async (c) => {
     by_construction: bucket("construction"),
     by_market_regime: bucket("market_regime"),
     by_ai_confidence: bucket("ai_confidence_bucket"),
+    attribution_sample: attributionRows?.length || 0,
+    top_profit_factors: attributionFactors.filter((row) => Number(row.avg_weight || 0) > 0).slice(0, 10),
+    top_loss_factors: attributionFactors.filter((row) => Number(row.avg_weight || 0) < 0).slice(0, 10),
   });
 });
 
