@@ -669,7 +669,7 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
     }
   }
 
-  await db.from("report_runs").insert({
+  const { error: insertError } = await db.from("report_runs").insert({
     id: runId,
     run_date: runDate,
     started_at: new Date().toISOString(),
@@ -678,6 +678,7 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
     summary: {},
     narrative: "",
   });
+  if (insertError) throw new Error(`report_runs insert failed: ${insertError.message}`);
 
   try {
     const universe = await loadUniverse();

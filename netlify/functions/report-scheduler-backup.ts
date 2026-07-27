@@ -97,14 +97,13 @@ export const handler: Handler = async (event) => {
       const createdAt = new Date(run.created_at);
       if (createdAt < slotStart) return false;
       if (run.event !== "schedule" && run.event !== "workflow_dispatch") return false;
-      if (run.status !== "completed") return true;
-      return run.conclusion === "success";
+      return run.status !== "completed";
     });
 
     if (activeRun) {
       return json(200, {
         status: "skipped",
-        reason: activeRun.status === "completed" ? "github_run_already_completed_for_slot" : "github_run_already_active_for_slot",
+        reason: "github_run_already_active_for_slot",
         slot: slotLabel,
         github_run: {
           id: activeRun.id,

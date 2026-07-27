@@ -62,6 +62,9 @@ export function invalidate(key) {
 
 export function invalidateAll() {
   store.clear();
+  inflight.clear();
+  try { sessionStorage.removeItem(SS_KEY); }
+  catch (err) { console.debug("[cache] sessionStorage clear failed", err); }
   schedulePersist();
 }
 

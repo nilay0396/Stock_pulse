@@ -99,7 +99,13 @@ export default function Layout() {
     { to: "/backtests", icon: BarChart3, label: "Backtests", testid: "nav-backtests" },
     { to: "/deliveries", icon: Send, label: "Delivery", testid: "nav-deliveries" },
     { to: "/preferences", icon: SettingsIcon, label: "Prefs", testid: "nav-preferences" },
-  ]), []);
+    ...(isAdmin ? [
+      { to: "/admin/connectors", icon: Radio, label: "Connectors", testid: "nav-admin-connectors" },
+      { to: "/admin/settings", icon: SettingsIcon, label: "Admin Settings", testid: "nav-admin-settings" },
+      { to: "/admin/users", icon: Users, label: "Users", testid: "nav-admin-users" },
+      { to: "/admin/logs", icon: ClipboardList, label: "Audit", testid: "nav-admin-logs" },
+    ] : []),
+  ]), [isAdmin]);
 
   return (
     <div className="min-h-screen flex md:flex-row flex-col" style={{ background: "var(--bg)" }}>

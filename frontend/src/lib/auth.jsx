@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import api from "./api";
+import { invalidateAll } from "./cache";
 
 const AuthCtx = createContext(null);
 
@@ -23,7 +24,7 @@ export function AuthProvider({ children }) {
 
   const refresh = useCallback(async () => {
     const token = localStorage.getItem("mp_token");
-    if (!token) { setUser(null); setLoading(false); return; }
+    if (!token) { invalidateAll(); setUser(null); setLoading(false); return; }
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);
@@ -32,6 +33,7 @@ export function AuthProvider({ children }) {
     } catch {
       localStorage.removeItem("mp_token");
       localStorage.removeItem(CACHED_USER_KEY);
+      invalidateAll();
       setUser(null);
     } finally {
       setLoading(false);
@@ -41,6 +43,7 @@ export function AuthProvider({ children }) {
   useEffect(() => { refresh(); }, [refresh]);
 
   const login = async (email, password) => {
+    invalidateAll();
     const { data } = await api.post("/auth/login", { email, password });
     localStorage.setItem("mp_token", data.access_token);
     try { localStorage.setItem(CACHED_USER_KEY, JSON.stringify(data.user)); }
@@ -50,6 +53,7 @@ export function AuthProvider({ children }) {
   };
 
   const register = async (email, password, name) => {
+    invalidateAll();
     const { data } = await api.post("/auth/register", { email, password, name });
     localStorage.setItem("mp_token", data.access_token);
     try { localStorage.setItem(CACHED_USER_KEY, JSON.stringify(data.user)); }
@@ -61,6 +65,7 @@ export function AuthProvider({ children }) {
   const logout = () => {
     localStorage.removeItem("mp_token");
     localStorage.removeItem(CACHED_USER_KEY);
+    invalidateAll();
     setUser(null);
   };
 

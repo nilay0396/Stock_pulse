@@ -4,18 +4,25 @@ import { RefreshCw, Play } from "lucide-react";
 import api from "../lib/api";
 import { fmtDate } from "../lib/fmt";
 import StatusDot from "../components/StatusDot";
+import ErrorState from "../components/ErrorState";
 
 export default function AdminConnectors() {
   const [rows, setRows] = useState([]);
   const [ingestions, setIngestions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [running, setRunning] = useState(null);
 
   const load = async () => {
     setLoading(true);
+    setError(null);
     try {
       const [c, i] = await Promise.all([api.get("/admin/connectors"), api.get("/admin/ingestion-runs", { params: { limit: 30 } })]);
       setRows(c.data); setIngestions(i.data);
+    } catch (e) {
+      setRows([]);
+      setIngestions([]);
+      setError(e);
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
@@ -45,6 +52,8 @@ export default function AdminConnectors() {
         </div>
       </header>
 
+      <ErrorState error={error} fallback="Connector status failed to load." onRetry={load} />
+
       <div className="panel overflow-x-auto" data-testid="connectors-table">
         <table className="w-full data-table">
           <thead><tr>
@@ -67,6 +76,7 @@ export default function AdminConnectors() {
                 </td>
               </tr>
             ))}
+            {!loading && !error && rows.length === 0 && <tr><td colSpan={8} className="text-center py-6" style={{ color: "var(--text-muted)" }}>No connectors found.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -86,7 +96,7 @@ export default function AdminConnectors() {
                 <td className="font-body text-[12px]" style={{ color: "var(--bearish)" }}>{i.error || ""}</td>
               </tr>
             ))}
-            {!loading && ingestions.length === 0 && <tr><td colSpan={6} className="text-center py-6" style={{ color: "var(--text-muted)" }}>No runs yet.</td></tr>}
+            {!loading && !error && ingestions.length === 0 && <tr><td colSpan={6} className="text-center py-6" style={{ color: "var(--text-muted)" }}>No runs yet.</td></tr>}
           </tbody>
         </table>
       </section>

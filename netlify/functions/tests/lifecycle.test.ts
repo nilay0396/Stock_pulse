@@ -84,3 +84,14 @@ test("lifecycle expires as no_entry after horizon if entry never trades", () => 
   const next = evaluateLifecycle(row(), [bar("2026-07-02", 105, 108, 107)], new Date("2026-07-09T00:00:00Z"));
   assert.equal(next.status, "no_entry");
 });
+
+test("lifecycle rejects entries after the entry window", () => {
+  const next = evaluateLifecycle(row(), [
+    bar("2026-07-02", 105, 108, 106),
+    bar("2026-07-03", 105, 108, 106),
+    bar("2026-07-04", 105, 108, 106),
+    bar("2026-07-05", 100, 103, 102, 101),
+  ], new Date("2026-07-05T00:00:00Z"));
+  assert.equal(next.status, "no_entry");
+  assert.equal(next.entry_date, null);
+});

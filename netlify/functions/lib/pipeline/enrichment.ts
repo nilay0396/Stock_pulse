@@ -152,9 +152,13 @@ export async function loadLatestFlows(): Promise<{ fiiNetCr: number | null; diiN
     const cat = String(row.category || "").toLowerCase();
     if (!latestByCat.has(cat)) latestByCat.set(cat, row);
   }
+  const asNullableNumber = (value: unknown): number | null => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  };
   return {
-    fiiNetCr: Number(latestByCat.get("fii")?.net_value ?? latestByCat.get("fpi")?.net_value) || null,
-    diiNetCr: Number(latestByCat.get("dii")?.net_value) || null,
+    fiiNetCr: asNullableNumber(latestByCat.get("fii")?.net_value ?? latestByCat.get("fpi")?.net_value),
+    diiNetCr: asNullableNumber(latestByCat.get("dii")?.net_value),
   };
 }
 
@@ -193,7 +197,7 @@ export async function loadPerformanceCalibration(): Promise<Dict> {
   const { data, error } = await db
     .from("recommendation_lifecycle")
     .select("trade_idea_id, sector, horizon, direction, status, return_pct")
-    .in("status", ["hit_target", "hit_stop", "hit_trailing_stop", "expired"])
+    .in("status", ["hit_target", "hit_stop", "hit_trailing_stop", "expired", "no_entry"])
     .limit(1000);
   if (error || !data?.length) return { sample: 0, thresholdOffset: 0, notes: ["No lifecycle history yet; calibration neutral."] };
   const closed = data || [];

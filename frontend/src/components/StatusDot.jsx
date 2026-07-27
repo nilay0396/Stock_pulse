@@ -8,5 +8,5 @@ export default function StatusDot({ status = "idle" }) {
     dry_run: "dot-warn",
     pending: "dot-warn",
   }[status] || "dot-idle";
-  return <span className={`status-dot ${cls}`} title={status} />;
+  return <span className={`status-dot ${cls}`} title={status} role="status" aria-label={status} />;
 }

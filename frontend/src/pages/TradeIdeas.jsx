@@ -25,11 +25,13 @@ export default function TradeIdeas() {
 
   const { data: excluded = [] } = useCached("ideas:excluded",
     () => api.get("/ideas/excluded").then((r) => r.data));
+  const { data: sectorIdeas = [] } = useCached("ideas:sector-options",
+    () => api.get("/ideas", { params: { limit: 500 } }).then((r) => r.data));
 
   const sectors = useMemo(() => {
-    const s = new Set(ideas.map((i) => i.sector).filter(Boolean));
+    const s = new Set(sectorIdeas.map((i) => i.sector).filter(Boolean));
     return Array.from(s);
-  }, [ideas]);
+  }, [sectorIdeas]);
 
   const showSkeletons = loading && ideas.length === 0;
 

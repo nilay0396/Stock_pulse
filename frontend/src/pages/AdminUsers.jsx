@@ -2,14 +2,18 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import api from "../lib/api";
 import { fmtDate } from "../lib/fmt";
+import ErrorState from "../components/ErrorState";
 
 export default function AdminUsers() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   const load = async () => {
     setLoading(true);
+    setError(null);
     try { const { data } = await api.get("/admin/users"); setUsers(data); }
+    catch (e) { setUsers([]); setError(e); }
     finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
@@ -31,6 +35,7 @@ export default function AdminUsers() {
         <div className="overline">Admin</div>
         <h1 className="font-heading text-3xl">Users</h1>
       </header>
+      <ErrorState error={error} fallback="Users failed to load." onRetry={load} />
       <div className="panel overflow-x-auto" data-testid="users-table">
         <table className="w-full data-table">
           <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Telegram</th><th>Email alerts</th><th>Created</th><th></th></tr></thead>
@@ -50,7 +55,7 @@ export default function AdminUsers() {
                 <td><button className="btn btn-ghost" onClick={() => resetPw(u.id)} data-testid={`reset-${u.id}`}>Reset PW</button></td>
               </tr>
             ))}
-            {!loading && users.length === 0 && <tr><td colSpan={7} className="text-center py-6" style={{ color: "var(--text-muted)" }}>No users</td></tr>}
+            {!loading && !error && users.length === 0 && <tr><td colSpan={7} className="text-center py-6" style={{ color: "var(--text-muted)" }}>No users</td></tr>}
           </tbody>
         </table>
       </div>

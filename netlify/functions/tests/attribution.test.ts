@@ -48,6 +48,13 @@ test("buildAttribution penalizes realized risks for losing outcomes", () => {
   assert.ok(risk.weight < -1);
 });
 
+test("buildAttribution treats no entry as a learnable negative outcome", () => {
+  const out = buildAttribution({ ...lifecycle, status: "no_entry", return_pct: null }, idea);
+  assert.equal(out.profit_loss, "loss");
+  assert.ok(out.attribution_score < 0);
+  assert.ok(out.factor_attributions.some((x: any) => x.key === "reason:volume_avg"));
+});
+
 test("summarizeAttributionFactors aggregates recurring factor weights", () => {
   const rows = [
     buildAttribution(lifecycle, idea),

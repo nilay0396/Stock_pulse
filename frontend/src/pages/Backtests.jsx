@@ -31,12 +31,14 @@ export default function Backtests() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
+  const [performanceError, setPerformanceError] = useState("");
   const [candidateFilter, setCandidateFilter] = useState("has_ideas");
   const [dateFilter, setDateFilter] = useState("all");
 
   async function load() {
     setLoading(true);
     setError("");
+    setPerformanceError("");
     try {
       const [reportsRes, runsRes, perfRes] = await Promise.allSettled([
         api.get("/backtests/candidates", { params: { limit: 100 } }),
@@ -46,6 +48,9 @@ export default function Backtests() {
       const failures = [reportsRes, runsRes, perfRes].filter((res) => res.status === "rejected");
       if (failures.length) {
         setError(failures[0].reason?.response?.data?.detail || failures[0].reason?.message || "Some backtest data failed to load.");
+      }
+      if (perfRes.status === "rejected") {
+        setPerformanceError(perfRes.reason?.response?.data?.detail || perfRes.reason?.message || "Recommendation performance failed to load.");
       }
       const candidates = reportsRes.status === "fulfilled" ? reportsRes.value.data || [] : [];
       const runRows = runsRes.status === "fulfilled" ? runsRes.value.data || [] : [];
@@ -59,6 +64,7 @@ export default function Backtests() {
       if (!selectedRun && runRows[0]?.id) await openRun(runRows[0].id);
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || "Backtest data failed to load.");
+      setPerformanceError("Recommendation performance failed to load.");
     } finally {
       setLoading(false);
     }
@@ -229,23 +235,31 @@ export default function Backtests() {
             {performance?.closed || 0} closed of {performance?.total || 0} resolved samples
           </div>
         </div>
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mt-4">
-          <Stat label="Hit Rate" value={pct(performance?.hit_rate_pct)} />
-          <Stat label="Avg Return" value={pct(performance?.avg_return_pct)} />
-          <Stat label="Targets" value={performance?.hit_target || 0} />
-          <Stat label="Stops" value={performance?.hit_stop || 0} />
-          <Stat label="No Entry" value={performance?.no_entry || 0} />
-        </div>
-        <div className="grid md:grid-cols-3 gap-4 mt-4">
-          <PerfBucket title="By Horizon" rows={performance?.by_horizon || []} />
-          <PerfBucket title="By Direction" rows={performance?.by_direction || []} />
-          <PerfBucket title="Top Sectors" rows={(performance?.by_sector || []).slice(0, 8)} />
-          <PerfBucket title="By Setup" rows={performance?.by_setup || []} />
-          <PerfBucket title="By Regime" rows={performance?.by_market_regime || []} />
-          <PerfBucket title="AI Confidence" rows={performance?.by_ai_confidence || []} />
-          <AttributionBucket title="Profit Factors" rows={performance?.top_profit_factors || []} />
-          <AttributionBucket title="Loss Factors" rows={performance?.top_loss_factors || []} />
-        </div>
+        {performanceError ? (
+          <div className="panel-elevated p-4 mt-4 text-[12px]" style={{ color: "var(--bearish)" }}>
+            {performanceError}
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mt-4">
+              <Stat label="Hit Rate" value={pct(performance?.hit_rate_pct)} />
+              <Stat label="Avg Return" value={pct(performance?.avg_return_pct)} />
+              <Stat label="Targets" value={performance?.hit_target || 0} />
+              <Stat label="Stops" value={performance?.hit_stop || 0} />
+              <Stat label="No Entry" value={performance?.no_entry || 0} />
+            </div>
+            <div className="grid md:grid-cols-3 gap-4 mt-4">
+              <PerfBucket title="By Horizon" rows={performance?.by_horizon || []} />
+              <PerfBucket title="By Direction" rows={performance?.by_direction || []} />
+              <PerfBucket title="Top Sectors" rows={(performance?.by_sector || []).slice(0, 8)} />
+              <PerfBucket title="By Setup" rows={performance?.by_setup || []} />
+              <PerfBucket title="By Regime" rows={performance?.by_market_regime || []} />
+              <PerfBucket title="AI Confidence" rows={performance?.by_ai_confidence || []} />
+              <AttributionBucket title="Profit Factors" rows={performance?.top_profit_factors || []} />
+              <AttributionBucket title="Loss Factors" rows={performance?.top_loss_factors || []} />
+            </div>
+          </>
+        )}
       </section>
 
       <div className="grid lg:grid-cols-[320px_1fr] gap-4">
@@ -312,7 +326,7 @@ export default function Backtests() {
                     <div className="font-body text-[11px]" style={{ color: "var(--text-muted)" }}>{trade.name || trade.sector || ""}</div>
                   </td>
                   <td>{trade.horizon || "-"}</td>
-                  <td><StatusDot status={trade.outcome === "hit_target" ? "success" : trade.outcome === "hit_stop" ? "failed" : "running"} /> <span className="ml-2">{trade.outcome}</span></td>
+                  <td><StatusDot status={statusForOutcome(trade.outcome)} /> <span className="ml-2">{trade.outcome}</span></td>
                   <td>{trade.entry_price ? `${trade.entry_price} (${trade.entry_date || "-"})` : "-"}</td>
                   <td>{trade.exit_price ? `${trade.exit_price} (${trade.exit_date || "-"})` : "-"}</td>
                   <td className="numeric" style={{ color: Number(trade.return_pct || 0) >= 0 ? "var(--bullish)" : "var(--bearish)" }}>{trade.return_pct == null ? "-" : pct(trade.return_pct)}</td>
@@ -328,6 +342,13 @@ export default function Backtests() {
       </div>
     </div>
   );
+}
+
+function statusForOutcome(outcome) {
+  if (outcome === "hit_target" || outcome === "target_1_hit") return "success";
+  if (outcome === "hit_stop" || outcome === "hit_trailing_stop" || outcome === "expired" || outcome === "error") return "failed";
+  if (outcome === "no_entry" || outcome === "no_data") return "idle";
+  return "running";
 }
 
 function reportOptionLabel(r) {

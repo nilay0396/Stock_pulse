@@ -1,4 +1,5 @@
 import axios from "axios";
+import { invalidateAll } from "./cache";
 
 // Empty/unset REACT_APP_BACKEND_URL means "same origin" (Netlify serves the
 // frontend and /api/* redirects to Netlify Functions from the same domain).
@@ -21,6 +22,8 @@ api.interceptors.response.use(
                       window.location.pathname.startsWith("/register");
       if (!onLogin) {
         localStorage.removeItem("mp_token");
+        localStorage.removeItem("mp_user");
+        invalidateAll();
         window.location.href = "/login";
       }
     }

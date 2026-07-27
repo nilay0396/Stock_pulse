@@ -5,6 +5,7 @@ import { fetchEquityOhlcDated, type DatedOhlcvBar } from "../market/yahoo.js";
 type Dict = Record<string, any>;
 
 const HORIZON_DAYS: Record<string, number> = { weekly: 7, monthly: 30, both: 30 };
+const ENTRY_WINDOW_BARS = 3;
 const ACTIVE_STATUSES = new Set(["active", "pending_entry", "target_1_hit", "trailing"]);
 const FINAL_STATUSES = new Set(["hit_target", "hit_stop", "hit_trailing_stop", "expired", "no_entry", "no_data", "error"]);
 const FINAL_STATUS_FILTER = '("hit_target","hit_stop","hit_trailing_stop","expired","no_entry","no_data","error")';
@@ -104,6 +105,7 @@ export function evaluateLifecycle(row: LifecycleRow, bars: DatedOhlcvBar[], now 
   const targetHigh = asNumber(row.target_high);
   const horizonDays = HORIZON_DAYS[row.horizon || "weekly"] || 7;
   const elapsedDays = calendarDaysSince(row.original_run_date, now);
+  const entryWindowClosed = bars.length >= ENTRY_WINDOW_BARS;
 
   if (!entryLow || !entryHigh || !stopLoss || !targetLow || !targetHigh) {
     return { ...row, status: "no_data", status_note: "Missing entry, stop or target levels", days_active: elapsedDays };
@@ -134,12 +136,14 @@ export function evaluateLifecycle(row: LifecycleRow, bars: DatedOhlcvBar[], now 
   const initialTrail = entryPrice ? entryPrice : direction === "bearish" ? entryHigh : entryLow;
   if (t1AlreadyHit && !trailingStop) trailingStop = initialTrail;
 
-  for (const bar of bars) {
+  for (let i = 0; i < bars.length; i += 1) {
+    const bar = bars[i];
     currentPrice = bar.close;
     if (row.target1_date && bar.date <= row.target1_date) continue;
     if (!row.target1_date && row.entry_date && bar.date <= row.entry_date) continue;
 
     if (!entryDate && enteredOnBar(bar, entryLow, entryHigh)) {
+      if (i >= ENTRY_WINDOW_BARS) break;
       entryDate = bar.date;
       entryPrice = entryPriceForBar(bar, entryLow, entryHigh);
       status = "active";
@@ -214,6 +218,12 @@ export function evaluateLifecycle(row: LifecycleRow, bars: DatedOhlcvBar[], now 
         }
       }
     }
+  }
+
+  if (!FINAL_STATUSES.has(status) && !entryDate && entryWindowClosed) {
+    status = "no_entry";
+    exitDate = bars[bars.length - 1].date;
+    exitPrice = currentPrice;
   }
 
   if (!FINAL_STATUSES.has(status) && elapsedDays >= horizonDays) {

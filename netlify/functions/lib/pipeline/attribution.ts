@@ -3,8 +3,8 @@ import { db } from "../db.js";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Dict = Record<string, any>;
 
-const FINAL_STATUSES = ["hit_target", "hit_stop", "hit_trailing_stop", "expired"];
-const NEGATIVE_OUTCOMES = new Set(["hit_stop", "expired"]);
+const FINAL_STATUSES = ["hit_target", "hit_stop", "hit_trailing_stop", "expired", "no_entry"];
+const NEGATIVE_OUTCOMES = new Set(["hit_stop", "expired", "no_entry"]);
 const POSITIVE_OUTCOMES = new Set(["hit_target"]);
 
 export type AttributionFactor = {
