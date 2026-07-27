@@ -8,19 +8,20 @@ import { useCached, invalidate } from "../lib/cache";
 import { fmtNum, fmtPct, pctColor, directionBadge, fmtRupee } from "../lib/fmt";
 import { SkeletonCard, SkeletonList, SkeletonParagraph, ShimmerLine } from "../components/SkeletonBits";
 import FunnelWidget from "../components/FunnelWidget";
+import ErrorState from "../components/ErrorState";
 
 export default function Dashboard() {
   const { user } = useAuth();
   const [generating, setGenerating] = useState(false);
 
   const {
-    data: latest, loading: latestLoading, refetch: refetchLatest,
+    data: latest, loading: latestLoading, error: latestError, refetch: refetchLatest,
   } = useCached("dashboard:latest", () => api.get("/reports/latest").then((r) => r.data));
   const {
-    data: ideas = [], loading: ideasLoading, refetch: refetchIdeas,
+    data: ideas = [], loading: ideasLoading, error: ideasError, refetch: refetchIdeas,
   } = useCached("dashboard:ideas", () => api.get("/ideas", { params: { limit: 8 } }).then((r) => r.data));
   const {
-    data: sectors = [], loading: sectorsLoading, refetch: refetchSectors,
+    data: sectors = [], loading: sectorsLoading, error: sectorsError, refetch: refetchSectors,
   } = useCached("dashboard:sectors", () => api.get("/macro/sectors").then((r) => r.data));
 
   const refreshAll = () => { refetchLatest(); refetchIdeas(); refetchSectors(); };
@@ -88,6 +89,8 @@ export default function Dashboard() {
           )}
         </div>
       </header>
+
+      <ErrorState error={latestError || ideasError || sectorsError} onRetry={refreshAll} />
 
       {isEmpty ? (
         <div className="panel p-10 text-center" data-testid="empty-report">

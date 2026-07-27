@@ -32,11 +32,23 @@ test("backtest books target 1 and final target as blended return", () => {
   assert.ok(Number(result.return_pct) > 10);
 });
 
+test("backtest trails using the prior stop before updating it", () => {
+  const result = simulateTrade([
+    bar("2026-07-02", 100, 103, 101),
+    bar("2026-07-03", 109, 111, 110),
+    bar("2026-07-04", 102, 109, 106),
+  ], idea) as Record<string, unknown>;
+  assert.equal(result.outcome, "target_1_hit");
+  assert.equal(result.target1_price, 110);
+  assert.equal(result.trailing_stop, 103.35);
+});
+
 test("backtest records trailing stop instead of calling target 1 a completed win", () => {
   const result = simulateTrade([
     bar("2026-07-02", 100, 103, 101),
     bar("2026-07-03", 109, 111, 110),
     bar("2026-07-04", 102, 109, 106),
+    bar("2026-07-05", 103, 108, 104),
   ], idea) as Record<string, unknown>;
   assert.equal(result.outcome, "hit_trailing_stop");
   assert.equal(result.target1_price, 110);

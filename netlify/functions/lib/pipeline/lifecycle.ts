@@ -63,6 +63,13 @@ export function signedReturnPct(direction: string, entry: number, exit: number):
   return round(direction === "bearish" ? -raw : raw, 3);
 }
 
+function blendedReturnPct(direction: string, entry: number, target1: number, mark: number, partialExitPct = 50): number {
+  const partial = Math.max(0, Math.min(100, partialExitPct)) / 100;
+  const firstLeg = signedReturnPct(direction, entry, target1);
+  const secondLeg = signedReturnPct(direction, entry, mark);
+  return round(firstLeg * partial + secondLeg * (1 - partial), 3);
+}
+
 function enteredOnBar(bar: DatedOhlcvBar, entryLow: number, entryHigh: number): boolean {
   return bar.low <= entryHigh && bar.high >= entryLow;
 }
@@ -163,14 +170,14 @@ export function evaluateLifecycle(row: LifecycleRow, bars: DatedOhlcvBar[], now 
           exitPrice = t2;
           break;
         }
-        if (!hitTarget1ThisBar) {
-          trailingStop = trailingStop ? Math.min(trailingStop, Math.max(bar.close * 1.025, bar.high)) : entryPrice || entryHigh;
-        }
         if (!hitTarget1ThisBar && bar.high >= trailingStop) {
           status = "hit_trailing_stop";
           exitDate = bar.date;
           exitPrice = trailingStop;
           break;
+        }
+        if (!hitTarget1ThisBar) {
+          trailingStop = trailingStop ? Math.min(trailingStop, bar.close * 1.025) : entryPrice || entryHigh;
         }
       }
     } else {
@@ -196,14 +203,14 @@ export function evaluateLifecycle(row: LifecycleRow, bars: DatedOhlcvBar[], now 
           exitPrice = t2;
           break;
         }
-        if (!hitTarget1ThisBar) {
-          trailingStop = trailingStop ? Math.max(trailingStop, Math.min(bar.close * 0.975, bar.low)) : entryPrice || entryLow;
-        }
         if (!hitTarget1ThisBar && bar.low <= trailingStop) {
           status = "hit_trailing_stop";
           exitDate = bar.date;
           exitPrice = trailingStop;
           break;
+        }
+        if (!hitTarget1ThisBar) {
+          trailingStop = trailingStop ? Math.max(trailingStop, bar.close * 0.975) : entryPrice || entryLow;
         }
       }
     }
@@ -226,7 +233,12 @@ export function evaluateLifecycle(row: LifecycleRow, bars: DatedOhlcvBar[], now 
   }
 
   const markPrice = exitPrice || currentPrice;
-  const returnPct = entryDate && entryPrice ? signedReturnPct(direction, entryPrice, markPrice) : null;
+  const partialExitPct = row.partial_exit_pct ?? 50;
+  const returnPct = entryDate && entryPrice
+    ? target1Date && target1Price
+      ? blendedReturnPct(direction, entryPrice, target1Price, markPrice, partialExitPct)
+      : signedReturnPct(direction, entryPrice, markPrice)
+    : null;
   const next: LifecycleRow = {
     ...row,
     status,
@@ -238,7 +250,7 @@ export function evaluateLifecycle(row: LifecycleRow, bars: DatedOhlcvBar[], now 
     target1_date: target1Date,
     target1_price: target1Price ? round(target1Price, 2) : null,
     trailing_stop: trailingStop ? round(trailingStop, 2) : null,
-    partial_exit_pct: row.partial_exit_pct ?? 50,
+    partial_exit_pct: partialExitPct,
     return_pct: returnPct,
     days_active: elapsedDays,
     status_note: status.replace(/_/g, " "),

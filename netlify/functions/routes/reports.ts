@@ -23,7 +23,7 @@ reportsRoutes.post("/run", requireAdmin, async (c) => {
     universe_limit: String(body.universe_limit || ""),
     refresh_instruments: String(Boolean(body.refresh_instruments ?? true)),
     expand_universe: String(Boolean(body.expand_universe ?? true)),
-    force: String(Boolean(body.force ?? true)),
+    force: String(Boolean(body.force ?? false)),
     skip_delivery: String(Boolean(body.skip_delivery ?? false)),
   };
 

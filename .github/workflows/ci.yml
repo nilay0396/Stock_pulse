@@ -20,6 +20,8 @@ jobs:
         working-directory: netlify/functions
         run: |
           npm ci
+          npm test
+          npx tsc --noEmit
           npm run bundle
 
       - name: Build frontend

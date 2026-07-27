@@ -5,6 +5,7 @@ import { useCached } from "../lib/cache";
 import { fmtRupee, fmtNum, directionBadge } from "../lib/fmt";
 import ConvictionBar from "../components/ConvictionBar";
 import { SkeletonTableRows } from "../components/SkeletonBits";
+import ErrorState from "../components/ErrorState";
 
 export default function TradeIdeas() {
   const [horizon, setHorizon] = useState("");
@@ -13,7 +14,7 @@ export default function TradeIdeas() {
   const [minConv, setMinConv] = useState(0);
 
   const key = `ideas:${horizon}:${direction}:${sector}:${minConv}`;
-  const { data: ideas = [], loading } = useCached(key, () => {
+  const { data: ideas = [], loading, error, refetch } = useCached(key, () => {
     const params = { limit: 100 };
     if (horizon) params.horizon = horizon;
     if (direction) params.direction = direction;
@@ -38,6 +39,8 @@ export default function TradeIdeas() {
         <div className="overline">Signals</div>
         <h1 className="font-heading text-3xl">Trade Ideas</h1>
       </header>
+
+      <ErrorState error={error} fallback="Trade ideas failed to load." onRetry={refetch} />
 
       <div className="panel p-4 flex flex-wrap gap-3" data-testid="ideas-filter-bar">
         <select className="input max-w-[180px]" value={horizon} onChange={(e) => setHorizon(e.target.value)} data-testid="filter-horizon">

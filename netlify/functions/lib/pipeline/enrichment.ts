@@ -1,6 +1,6 @@
 import { db } from "../db.js";
 import type { MacroPoint } from "../market/yahoo.js";
-import { summarizeAttributionFactors } from "./attribution.js";
+import { attributionToken, summarizeAttributionFactors } from "./attribution.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Dict = Record<string, any>;
@@ -25,15 +25,6 @@ function daysUntil(value: unknown): number | null {
   return Math.ceil((t - now) / 86400000);
 }
 
-function attributionToken(value: unknown): string {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .slice(0, 80);
-}
-
 function isPositiveAnnouncement(text: string): boolean {
   const lower = text.toLowerCase();
   return ["order", "contract", "award", "buyback", "bonus", "split", "dividend", "acquisition", "approval"].some((k) => lower.includes(k));
@@ -42,6 +33,34 @@ function isPositiveAnnouncement(text: string): boolean {
 function isRiskAnnouncement(text: string): boolean {
   const lower = text.toLowerCase();
   return ["resignation", "default", "downgrade", "penalty", "litigation", "search", "seizure", "fraud", "delay"].some((k) => lower.includes(k));
+}
+
+function daysAgoStart(days: number): number {
+  return new Date(`${todayIst()}T00:00:00Z`).getTime() - days * 86400000;
+}
+
+function rowTime(row: Dict): number | null {
+  for (const key of ["disclosure_time", "ex_date", "date", "broadcast_date", "bm_date", "as_of", "ingested_at"]) {
+    const parsed = parseDate(row[key]);
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
+function recentUnique(rows: Dict[], days: number, keyFn: (row: Dict) => string): Dict[] {
+  const cutoff = daysAgoStart(days);
+  const seen = new Set<string>();
+  return rows
+    .filter((row) => {
+      const t = rowTime(row);
+      return t === null || t >= cutoff;
+    })
+    .filter((row) => {
+      const key = keyFn(row);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 async function rowsBySymbol(table: string, symbols: string[], select = "*", limit = 1000): Promise<Record<string, Dict[]>> {
@@ -70,11 +89,11 @@ export async function loadOfficialData(symbols: string[]): Promise<Record<string
   const out: Record<string, Dict> = {};
   for (const symbol of unique) {
     const latestBhav = [...(bhav[symbol] || [])].sort((a, b) => String(b.as_of || "").localeCompare(String(a.as_of || "")))[0] || null;
-    const ann = announcements[symbol] || [];
-    const acts = actions[symbol] || [];
-    const ins = insider[symbol] || [];
-    const res = results[symbol] || [];
-    const sh = shareholding[symbol] || [];
+    const ann = recentUnique(announcements[symbol] || [], 30, (r) => `${r.symbol}:${r.disclosure_time || r.ingested_at}:${r.subject}:${r.description}`);
+    const acts = recentUnique(actions[symbol] || [], 90, (r) => `${r.symbol}:${r.ex_date}:${r.subject}`);
+    const ins = recentUnique(insider[symbol] || [], 90, (r) => `${r.symbol}:${r.broadcast_date || r.ingested_at}:${r.acquirer}:${r.tx_type}:${r.value}`);
+    const res = recentUnique(results[symbol] || [], 120, (r) => `${r.symbol}:${r.bm_date}:${r.purpose}`);
+    const sh = recentUnique(shareholding[symbol] || [], 180, (r) => `${r.symbol}:${r.date}:${r.description || r.pdf || r.xbrl}`);
     const upcomingResultRows = (res as Dict[])
       .map((r) => ({ ...r, days: daysUntil(r.bm_date) }))
       .filter((r) => r.days !== null && r.days >= 0)

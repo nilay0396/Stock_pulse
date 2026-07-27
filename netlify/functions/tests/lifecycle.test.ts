@@ -52,7 +52,19 @@ test("lifecycle closes remaining position only when final target is reached", ()
   ], new Date("2026-07-04T00:00:00Z"));
   assert.equal(next.status, "hit_target");
   assert.equal(next.exit_price, 120);
-  assert.ok(Number(next.return_pct) > 0);
+  assert.equal(next.return_pct, 13.862);
+});
+
+test("lifecycle uses the previous trailing stop before moving it for the next bar", () => {
+  const next = evaluateLifecycle(row(), [
+    bar("2026-07-02", 100, 103, 101),
+    bar("2026-07-03", 104, 111, 110),
+    bar("2026-07-04", 102, 109, 106),
+  ], new Date("2026-07-04T00:00:00Z"));
+  assert.equal(next.status, "trailing");
+  assert.equal(next.target1_price, 110);
+  assert.equal(next.trailing_stop, 103.35);
+  assert.equal(next.return_pct, 6.931);
 });
 
 test("lifecycle can close on trailing stop after target 1", () => {
@@ -60,10 +72,12 @@ test("lifecycle can close on trailing stop after target 1", () => {
     bar("2026-07-02", 100, 103, 101),
     bar("2026-07-03", 104, 111, 110),
     bar("2026-07-04", 102, 109, 106),
+    bar("2026-07-05", 103, 108, 104),
   ], new Date("2026-07-04T00:00:00Z"));
   assert.equal(next.status, "hit_trailing_stop");
   assert.equal(next.target1_price, 110);
   assert.ok(next.trailing_stop);
+  assert.equal(next.return_pct, 5.619);
 });
 
 test("lifecycle expires as no_entry after horizon if entry never trades", () => {

@@ -3,8 +3,36 @@ import { db } from "../lib/db.js";
 
 export const healthRoutes = new Hono();
 
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+function todayIst(): string {
+  return new Date(Date.now() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+function calendarAgeDays(dateOnly?: string | null): number | null {
+  if (!dateOnly) return null;
+  const start = new Date(`${dateOnly}T00:00:00Z`).getTime();
+  if (!Number.isFinite(start)) return null;
+  const now = new Date(`${todayIst()}T00:00:00Z`).getTime();
+  return Math.max(0, Math.floor((now - start) / 86400000));
+}
+
 healthRoutes.get("/health", async (c) => {
-  return c.json({ status: "ok" });
+  const { data: lastReport } = await db
+    .from("report_runs")
+    .select("id, run_date, started_at")
+    .eq("status", "success")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const ageDays = calendarAgeDays(lastReport?.run_date);
+  return c.json({
+    status: "ok",
+    today_ist: todayIst(),
+    latest_successful_report: lastReport || null,
+    latest_report_age_days: ageDays,
+    report_stale: ageDays === null ? true : ageDays > 1,
+  });
 });
 
 healthRoutes.get("/readiness", async (c) => {

@@ -127,11 +127,13 @@ export function simulateTrade(bars: DatedOhlcvBar[], idea: Idea) {
   for (let i = entryIndex + 1; i <= endIndex; i += 1) {
     const bar = bars[i];
     if (direction === "bearish") {
+      let hitTarget1ThisBar = false;
       if (!target1Date && bar.high >= stopLoss) return outcome(idea, "hit_stop", entryPrice, stopLoss, i - entryIndex, entryDate, bar.date);
       if (!target1Date && bar.low <= target1) {
         target1Date = bar.date;
         target1Price = target1;
         trailingStop = entryPrice;
+        hitTarget1ThisBar = true;
       }
       if (target1Date) {
         if (bar.low <= target2) {
@@ -144,8 +146,7 @@ export function simulateTrade(bars: DatedOhlcvBar[], idea: Idea) {
           res.return_pct = blendedReturnPct(direction, entryPrice, target1Price, target2);
           return res;
         }
-        trailingStop = Math.min(trailingStop, Math.max(bar.close * 1.025, bar.high));
-        if (bar.high >= trailingStop) {
+        if (!hitTarget1ThisBar && bar.high >= trailingStop) {
           const res = outcome(idea, "hit_trailing_stop", entryPrice, trailingStop, i - entryIndex, entryDate, bar.date, {
             target1_date: target1Date,
             target1_price: Number(target1Price.toFixed(2)),
@@ -155,13 +156,16 @@ export function simulateTrade(bars: DatedOhlcvBar[], idea: Idea) {
           res.return_pct = blendedReturnPct(direction, entryPrice, target1Price, trailingStop);
           return res;
         }
+        if (!hitTarget1ThisBar) trailingStop = Math.min(trailingStop, bar.close * 1.025);
       }
     } else {
+      let hitTarget1ThisBar = false;
       if (!target1Date && bar.low <= stopLoss) return outcome(idea, "hit_stop", entryPrice, stopLoss, i - entryIndex, entryDate, bar.date);
       if (!target1Date && bar.high >= target1) {
         target1Date = bar.date;
         target1Price = target1;
         trailingStop = entryPrice;
+        hitTarget1ThisBar = true;
       }
       if (target1Date) {
         if (bar.high >= target2) {
@@ -174,8 +178,7 @@ export function simulateTrade(bars: DatedOhlcvBar[], idea: Idea) {
           res.return_pct = blendedReturnPct(direction, entryPrice, target1Price, target2);
           return res;
         }
-        trailingStop = Math.max(trailingStop, Math.min(bar.close * 0.975, bar.low));
-        if (bar.low <= trailingStop) {
+        if (!hitTarget1ThisBar && bar.low <= trailingStop) {
           const res = outcome(idea, "hit_trailing_stop", entryPrice, trailingStop, i - entryIndex, entryDate, bar.date, {
             target1_date: target1Date,
             target1_price: Number(target1Price.toFixed(2)),
@@ -185,6 +188,7 @@ export function simulateTrade(bars: DatedOhlcvBar[], idea: Idea) {
           res.return_pct = blendedReturnPct(direction, entryPrice, target1Price, trailingStop);
           return res;
         }
+        if (!hitTarget1ThisBar) trailingStop = Math.max(trailingStop, bar.close * 0.975);
       }
     }
   }

@@ -12,10 +12,34 @@ import {
 type Variables = { user: ReturnType<typeof userToPublic> };
 export const authRoutes = new Hono<{ Variables: Variables }>();
 
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const RATE_LIMIT_MAX = 20;
+const attempts = new Map<string, { count: number; resetAt: number }>();
+
+function clientKey(c: any, scope: string, email?: string): string {
+  const forwarded = c.req.header("x-forwarded-for") || "";
+  const ip = forwarded.split(",")[0].trim() || c.req.header("x-nf-client-connection-ip") || "unknown";
+  return `${scope}:${ip}:${email || ""}`;
+}
+
+function rateLimited(key: string): boolean {
+  const now = Date.now();
+  const current = attempts.get(key);
+  if (!current || current.resetAt <= now) {
+    attempts.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return false;
+  }
+  current.count += 1;
+  return current.count > RATE_LIMIT_MAX;
+}
+
 authRoutes.post("/register", async (c) => {
   const body = await c.req.json<{ email?: string; password?: string; name?: string }>();
   const email = (body.email || "").trim().toLowerCase();
   const password = body.password || "";
+  if (rateLimited(clientKey(c, "register", email))) {
+    return c.json({ detail: "Too many attempts. Try again later." }, 429);
+  }
 
   if (!email || password.length < 8 || password.length > 72) {
     return c.json({ detail: "Invalid email or password (8-72 chars)" }, 400);
@@ -56,6 +80,9 @@ authRoutes.post("/login", async (c) => {
   const body = await c.req.json<{ email?: string; password?: string }>();
   const email = (body.email || "").trim().toLowerCase();
   const password = body.password || "";
+  if (rateLimited(clientKey(c, "login", email))) {
+    return c.json({ detail: "Too many attempts. Try again later." }, 429);
+  }
 
   const { data: user, error } = await db
     .from("users")

@@ -90,9 +90,14 @@ export default function Layout() {
   const mobileItems = useMemo(() => ([
     { to: "/", icon: LayoutDashboard, label: "Dashboard", testid: "nav-dashboard" },
     { to: "/ideas", icon: TrendingUp, label: "Ideas", testid: "nav-ideas" },
+    { to: "/explorer", icon: Compass, label: "Explorer", testid: "nav-stocks" },
     { to: "/deep-dive", icon: Search, label: "Deep Dive", testid: "nav-deep-dive" },
+    { to: "/macro", icon: Globe2, label: "Macro", testid: "nav-macro" },
+    { to: "/flows", icon: ArrowLeftRight, label: "Flows", testid: "nav-flows" },
+    { to: "/news", icon: Newspaper, label: "News", testid: "nav-news" },
     { to: "/reports", icon: FileText, label: "Reports", testid: "nav-history" },
     { to: "/backtests", icon: BarChart3, label: "Backtests", testid: "nav-backtests" },
+    { to: "/deliveries", icon: Send, label: "Delivery", testid: "nav-deliveries" },
     { to: "/preferences", icon: SettingsIcon, label: "Prefs", testid: "nav-preferences" },
   ]), []);
 

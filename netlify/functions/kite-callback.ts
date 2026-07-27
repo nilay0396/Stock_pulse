@@ -8,6 +8,8 @@ export default async (req: Request): Promise<Response> => {
   const url = new URL(req.url);
   const requestToken = url.searchParams.get("request_token");
   const status = url.searchParams.get("status");
+  const state = url.searchParams.get("state");
+  const expectedState = process.env.KITE_OAUTH_STATE || "";
 
   if (status && status !== "success") {
     return redirect(`/?kite_token=failed&reason=${encodeURIComponent(status)}`);
@@ -15,6 +17,9 @@ export default async (req: Request): Promise<Response> => {
 
   if (!requestToken) {
     return new Response("Missing request_token", { status: 400 });
+  }
+  if (expectedState && state !== expectedState) {
+    return new Response("Invalid state", { status: 400 });
   }
 
   try {

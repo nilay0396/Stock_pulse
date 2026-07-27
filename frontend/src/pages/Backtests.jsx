@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Play, RefreshCw } from "lucide-react";
+import { Filter, Play, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import api from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { fmtDate } from "../lib/fmt";
 import StatusDot from "../components/StatusDot";
 import { SkeletonTableRows } from "../components/SkeletonBits";
@@ -21,6 +22,7 @@ function pct(value) {
 }
 
 export default function Backtests() {
+  const { user } = useAuth();
   const [reports, setReports] = useState([]);
   const [runs, setRuns] = useState([]);
   const [selectedReport, setSelectedReport] = useState("");
@@ -28,32 +30,47 @@ export default function Backtests() {
   const [performance, setPerformance] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
+  const [candidateFilter, setCandidateFilter] = useState("has_ideas");
+  const [dateFilter, setDateFilter] = useState("all");
 
   async function load() {
     setLoading(true);
+    setError("");
     try {
-      const [reportsRes, runsRes, perfRes] = await Promise.all([
-        api.get("/backtests/candidates", { params: { limit: 80 } }),
+      const [reportsRes, runsRes, perfRes] = await Promise.allSettled([
+        api.get("/backtests/candidates", { params: { limit: 100 } }),
         api.get("/backtests/runs", { params: { limit: 50 } }),
         api.get("/ideas/performance"),
       ]);
-      const candidates = reportsRes.data || [];
+      const failures = [reportsRes, runsRes, perfRes].filter((res) => res.status === "rejected");
+      if (failures.length) {
+        setError(failures[0].reason?.response?.data?.detail || failures[0].reason?.message || "Some backtest data failed to load.");
+      }
+      const candidates = reportsRes.status === "fulfilled" ? reportsRes.value.data || [] : [];
+      const runRows = runsRes.status === "fulfilled" ? runsRes.value.data || [] : [];
       setReports(candidates);
-      setRuns(runsRes.data || []);
-      setPerformance(perfRes.data || null);
+      setRuns(runRows);
+      setPerformance(perfRes.status === "fulfilled" ? perfRes.value.data || null : null);
       if (!selectedReport && candidates.length) {
         const preferred = candidates.find((r) => r.ready) || candidates.find((r) => Number(r.idea_count || 0) > 0) || candidates[0];
         setSelectedReport(preferred.id);
       }
-      if (!selectedRun && runsRes.data?.[0]?.id) await openRun(runsRes.data[0].id);
+      if (!selectedRun && runRows[0]?.id) await openRun(runRows[0].id);
+    } catch (err) {
+      setError(err?.response?.data?.detail || err?.message || "Backtest data failed to load.");
     } finally {
       setLoading(false);
     }
   }
 
   async function openRun(id) {
-    const res = await api.get(`/backtests/runs/${id}`);
-    setSelectedRun(res.data);
+    try {
+      const res = await api.get(`/backtests/runs/${id}`);
+      setSelectedRun(res.data);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Failed to load backtest run");
+    }
   }
 
   async function runBacktest() {
@@ -82,7 +99,41 @@ export default function Backtests() {
     () => reports.find((r) => r.id === selectedReport),
     [reports, selectedReport],
   );
+  const reportDates = useMemo(
+    () => [...new Set(reports.map((r) => r.run_date).filter(Boolean))],
+    [reports],
+  );
+  const visibleReports = useMemo(() => reports.filter((r) => {
+    if (dateFilter !== "all" && r.run_date !== dateFilter) return false;
+    if (candidateFilter === "ready") return Boolean(r.ready);
+    if (candidateFilter === "has_ideas") return Number(r.idea_count || 0) > 0;
+    if (candidateFilter === "no_ideas") return Number(r.idea_count || 0) === 0;
+    return true;
+  }), [reports, candidateFilter, dateFilter]);
   const selectedReady = Boolean(selectedReportMeta?.ready);
+  const isAdmin = user?.role === "admin";
+  const runDisabledReason = !selectedReport
+    ? "Select a report"
+    : !selectedReportMeta
+      ? "Selected report is outside the current filter"
+      : !isAdmin
+        ? "Admin only"
+        : !selectedReady
+          ? Number(selectedReportMeta.idea_count || 0) === 0
+            ? "No ideas to test"
+            : `Ready on ${selectedReportMeta.next_ready_on || selectedReportMeta.ready_on || "-"}`
+          : "";
+
+  useEffect(() => {
+    if (!visibleReports.length) {
+      if (selectedReport) setSelectedReport("");
+      return;
+    }
+    if (!visibleReports.some((r) => r.id === selectedReport)) {
+      const preferred = visibleReports.find((r) => r.ready) || visibleReports[0];
+      setSelectedReport(preferred.id);
+    }
+  }, [visibleReports, selectedReport]);
 
   return (
     <div className="p-6 md:p-8 flex flex-col gap-5">
@@ -95,24 +146,47 @@ export default function Backtests() {
           </div>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+          <div className="flex gap-2">
+            <select className="input" value={candidateFilter} onChange={(e) => setCandidateFilter(e.target.value)} aria-label="Candidate filter">
+              <option value="has_ideas">Has ideas</option>
+              <option value="ready">Ready</option>
+              <option value="all">All reports</option>
+              <option value="no_ideas">No ideas</option>
+            </select>
+            <select className="input" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} aria-label="Report date filter">
+              <option value="all">All dates</option>
+              {reportDates.map((date) => <option key={date} value={date}>{date}</option>)}
+            </select>
+          </div>
           <select
             className="input min-w-[280px]"
             value={selectedReport}
             onChange={(e) => setSelectedReport(e.target.value)}
             aria-label="Report run"
           >
-            {reports.map((r) => (
+            {visibleReports.map((r) => (
               <option key={r.id} value={r.id}>
                 {reportOptionLabel(r)}
               </option>
             ))}
+            {!visibleReports.length && <option value="">No reports match</option>}
           </select>
-          <button className="btn btn-primary" onClick={runBacktest} disabled={!selectedReport || !selectedReady || running}>
+          <button className="btn btn-primary" onClick={runBacktest} disabled={!selectedReport || !selectedReady || !isAdmin || running}>
             {running ? <RefreshCw size={15} className="animate-spin" /> : <Play size={15} />}
-            {running ? "Running" : "Run Backtest"}
+            {running ? "Running" : runDisabledReason || "Run Backtest"}
           </button>
         </div>
       </header>
+
+      {error && (
+        <section className="panel p-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-[13px]" style={{ color: "var(--bearish)" }}>
+            <Filter size={15} />
+            <span>{error}</span>
+          </div>
+          <button className="btn btn-outline" onClick={load}>Retry</button>
+        </section>
+      )}
 
       {selectedReportMeta && (
         <section className="panel p-4">

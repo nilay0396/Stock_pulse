@@ -3,21 +3,37 @@ import { Link, useParams } from "react-router-dom";
 import api from "../lib/api";
 import { fmtNum, fmtPct, pctColor, fmtRupee, directionBadge } from "../lib/fmt";
 import ConvictionBar from "../components/ConvictionBar";
+import ErrorState from "../components/ErrorState";
 
 export default function ReportPreview() {
   const { runId } = useParams();
   const [r, setR] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      try { const { data } = await api.get(`/reports/${runId}`); setR(data); }
-      finally { setLoading(false); }
+      setError(null);
+      try {
+        const { data } = await api.get(`/reports/${runId}`);
+        setR(data);
+      } catch (err) {
+        setError(err);
+        setR(null);
+      } finally {
+        setLoading(false);
+      }
     })();
   }, [runId]);
 
   if (loading) return <div className="p-8 font-mono text-[12px]" style={{ color: "var(--text-muted)" }}>Loading…</div>;
+  if (error) return (
+    <div className="p-6 md:p-8 flex flex-col gap-5">
+      <ErrorState error={error} fallback="Report failed to load." />
+      <Link to="/reports" className="underline">Back</Link>
+    </div>
+  );
   if (!r) return <div className="p-8">Not found. <Link to="/reports" className="underline">Back</Link></div>;
 
   const macro = r.macro_snapshot || {};

@@ -30,10 +30,10 @@ test("buildAttribution credits reasons and context for profitable outcomes", () 
   assert.equal(out.profit_loss, "profit");
   assert.equal(out.outcome, "hit_target");
   assert.ok(out.attribution_score > 0);
-  assert.ok(out.reason_tags.includes("volume_2x_avg"));
+  assert.ok(out.reason_tags.includes("volume_avg"));
   assert.ok(out.context_tags.includes("setup_breakout"));
 
-  const reason = out.factor_attributions.find((x: any) => x.key === "reason:volume_2x_avg");
+  const reason = out.factor_attributions.find((x: any) => x.key === "reason:volume_avg");
   assert.equal(reason.effect, "helped");
   assert.ok(reason.weight > 0);
 });
@@ -55,7 +55,7 @@ test("summarizeAttributionFactors aggregates recurring factor weights", () => {
     buildAttribution({ ...lifecycle, id: "life-3", return_pct: 2.8 }, idea),
   ];
   const summary = summarizeAttributionFactors(rows, 3);
-  const item = summary.find((x) => x.key === "reason:volume_2x_avg");
+  const item = summary.find((x) => x.key === "reason:volume_avg");
   assert.equal(item?.count, 3);
   assert.ok(Number(item?.avg_weight || 0) > 0);
 });

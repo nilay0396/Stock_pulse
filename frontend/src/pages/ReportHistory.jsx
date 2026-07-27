@@ -4,9 +4,10 @@ import { useCached } from "../lib/cache";
 import { fmtDate } from "../lib/fmt";
 import StatusDot from "../components/StatusDot";
 import { SkeletonTableRows } from "../components/SkeletonBits";
+import ErrorState from "../components/ErrorState";
 
 export default function ReportHistory() {
-  const { data: items = [], loading } = useCached("reports:history",
+  const { data: items = [], loading, error, refetch } = useCached("reports:history",
     () => api.get("/reports/history", { params: { limit: 50 } }).then((r) => r.data));
   const showSk = loading && items.length === 0;
 
@@ -16,6 +17,7 @@ export default function ReportHistory() {
         <div className="overline">Archive</div>
         <h1 className="font-heading text-3xl">Report History</h1>
       </header>
+      <ErrorState error={error} fallback="Report history failed to load." onRetry={refetch} />
       <div className="panel overflow-x-auto" data-testid="reports-table">
         <table className="w-full data-table">
           <thead><tr>

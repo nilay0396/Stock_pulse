@@ -20,17 +20,33 @@ function round(value: number, decimals = 3): number {
   return Math.round(value * f) / f;
 }
 
-function cleanToken(value: unknown): string {
-  return String(value || "")
+export function attributionToken(value: unknown): string {
+  const raw = String(value || "").trim().toLowerCase();
+  const semantic =
+    raw.includes("rsi in sweet spot") ? "rsi_sweet_spot"
+    : raw.includes("volume") && raw.includes("avg") && raw.includes("accumulation") ? "volume_avg_accumulation"
+    : raw.includes("volume") && raw.includes("avg") ? "volume_avg"
+    : raw.includes("outperforming nifty") ? "outperforming_nifty"
+    : raw.includes("strong multi-timeframe uptrend") ? "strong_multi_timeframe_uptrend"
+    : raw.includes("breakout half of bollinger") ? "price_breakout_bollinger"
+    : raw.includes("f&o") && raw.includes("pcr") ? "fno_pcr_confirmation"
+    : raw.includes("elevated volatility") ? "elevated_volatility"
+    : raw.includes("high leverage") ? "high_leverage"
+    : raw.includes("elevated indivix") ? "elevated_indivix"
+    : raw.includes("data gap") ? "data_gap"
+    : null;
+  return (semantic || raw)
     .trim()
     .toLowerCase()
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/[+-]?\d+(\.\d+)?%?/g, " ")
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 80);
 }
 
 function textTag(value: unknown): string | null {
-  const token = cleanToken(value);
+  const token = attributionToken(value);
   return token.length >= 3 ? token : null;
 }
 
