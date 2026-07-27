@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { simulateTrade } from "../routes/backtests.js";
+import { requiredDaysForIdea, simulateTrade } from "../routes/backtests.js";
 import type { DatedOhlcvBar } from "../lib/market/yahoo.js";
 
 const idea = {
@@ -41,4 +41,9 @@ test("backtest records trailing stop instead of calling target 1 a completed win
   assert.equal(result.outcome, "hit_trailing_stop");
   assert.equal(result.target1_price, 110);
   assert.ok(result.trailing_stop);
+});
+
+test("backtest maturity rule includes entry window, horizon and buffer", () => {
+  assert.equal(requiredDaysForIdea({ horizon: "weekly" }), 12);
+  assert.equal(requiredDaysForIdea({ horizon: "monthly" }), 35);
 });

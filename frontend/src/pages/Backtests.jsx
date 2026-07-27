@@ -33,14 +33,18 @@ export default function Backtests() {
     setLoading(true);
     try {
       const [reportsRes, runsRes, perfRes] = await Promise.all([
-        api.get("/reports/history", { params: { limit: 50 } }),
+        api.get("/backtests/candidates", { params: { limit: 80 } }),
         api.get("/backtests/runs", { params: { limit: 50 } }),
         api.get("/ideas/performance"),
       ]);
-      setReports(reportsRes.data || []);
+      const candidates = reportsRes.data || [];
+      setReports(candidates);
       setRuns(runsRes.data || []);
       setPerformance(perfRes.data || null);
-      if (!selectedReport && reportsRes.data?.[0]?.id) setSelectedReport(reportsRes.data[0].id);
+      if (!selectedReport && candidates.length) {
+        const preferred = candidates.find((r) => r.ready) || candidates.find((r) => Number(r.idea_count || 0) > 0) || candidates[0];
+        setSelectedReport(preferred.id);
+      }
       if (!selectedRun && runsRes.data?.[0]?.id) await openRun(runsRes.data[0].id);
     } finally {
       setLoading(false);
@@ -78,6 +82,7 @@ export default function Backtests() {
     () => reports.find((r) => r.id === selectedReport),
     [reports, selectedReport],
   );
+  const selectedReady = Boolean(selectedReportMeta?.ready);
 
   return (
     <div className="p-6 md:p-8 flex flex-col gap-5">
@@ -98,16 +103,39 @@ export default function Backtests() {
           >
             {reports.map((r) => (
               <option key={r.id} value={r.id}>
-                {r.run_date} - {r.status} - {(r.id || "").slice(0, 8)}
+                {reportOptionLabel(r)}
               </option>
             ))}
           </select>
-          <button className="btn btn-primary" onClick={runBacktest} disabled={!selectedReport || running}>
+          <button className="btn btn-primary" onClick={runBacktest} disabled={!selectedReport || !selectedReady || running}>
             {running ? <RefreshCw size={15} className="animate-spin" /> : <Play size={15} />}
             {running ? "Running" : "Run Backtest"}
           </button>
         </div>
       </header>
+
+      {selectedReportMeta && (
+        <section className="panel p-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <div className="overline">Selected Report</div>
+              <div className="font-heading text-xl mt-1">
+                {selectedReportMeta.run_date} - {(selectedReportMeta.id || "").slice(0, 8)}
+              </div>
+              <div className="font-mono text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+                {Number(selectedReportMeta.idea_count || 0)} ideas - {Number(selectedReportMeta.mature_idea_count || 0)} mature - {Number(selectedReportMeta.pending_idea_count || 0)} pending
+              </div>
+            </div>
+            <div className="font-mono text-[12px]" style={{ color: selectedReady ? "var(--bullish)" : "var(--text-muted)" }}>
+              {selectedReady
+                ? "Ready to run"
+                : Number(selectedReportMeta.idea_count || 0) === 0
+                  ? "No ideas in this report"
+                  : `Ready on ${selectedReportMeta.next_ready_on || selectedReportMeta.ready_on || "-"}`}
+            </div>
+          </div>
+        </section>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Stat label="Closed" value={summary.closed ?? 0} />
@@ -226,6 +254,15 @@ export default function Backtests() {
       </div>
     </div>
   );
+}
+
+function reportOptionLabel(r) {
+  const id = (r.id || "").slice(0, 8);
+  const ideas = Number(r.idea_count || 0);
+  const mature = Number(r.mature_idea_count || 0);
+  if (!ideas) return `${r.run_date} - no ideas - ${id}`;
+  if (r.ready) return `${r.run_date} - ready ${mature}/${ideas} ideas - ${id}`;
+  return `${r.run_date} - ${ideas} ideas, ready ${r.next_ready_on || r.ready_on || "later"} - ${id}`;
 }
 
 function PerfBucket({ title, rows }) {

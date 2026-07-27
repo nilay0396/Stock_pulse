@@ -43,6 +43,16 @@ function calendarDaysSince(dateOnly: string): number {
   return Math.floor((Date.now() - start) / 86400000);
 }
 
+export function requiredDaysForIdea(idea: Pick<Idea, "horizon">): number {
+  return ENTRY_WINDOW_DAYS + (HORIZON_DAYS[idea.horizon || "weekly"] || 7) + 2;
+}
+
+function readyDate(runDate: string, requiredDays: number): string | null {
+  const start = new Date(`${runDate}T00:00:00Z`).getTime();
+  if (!Number.isFinite(start)) return null;
+  return new Date(start + requiredDays * 86400000).toISOString().slice(0, 10);
+}
+
 function signedReturnPct(direction: string, entry: number, exit: number): number {
   if (!entry) return 0;
   const raw = ((exit - entry) / entry) * 100;
@@ -289,6 +299,54 @@ backtestsRoutes.get("/runs", requireUser, async (c) => {
   return c.json(data || []);
 });
 
+backtestsRoutes.get("/candidates", requireUser, async (c) => {
+  const limit = Math.min(100, Math.max(1, Number(c.req.query("limit") || "60")));
+  const { data: reports, error } = await db
+    .from("report_runs")
+    .select("id,run_date,started_at,status")
+    .eq("status", "success")
+    .order("started_at", { ascending: false })
+    .limit(limit);
+  if (error) return c.json({ detail: "Failed to load backtest candidates" }, 500);
+
+  const reportIds = (reports || []).map((r) => r.id);
+  const { data: ideas, error: ideasError } = reportIds.length
+    ? await db.from("trade_ideas").select("id,report_run_id,horizon,symbol").in("report_run_id", reportIds).limit(1000)
+    : { data: [], error: null };
+  if (ideasError) return c.json({ detail: "Failed to load backtest idea counts" }, 500);
+
+  const byReport = new Map<string, Idea[]>();
+  for (const idea of ideas || []) {
+    const bucket = byReport.get(idea.report_run_id) || [];
+    bucket.push(idea as Idea);
+    byReport.set(idea.report_run_id, bucket);
+  }
+
+  return c.json((reports || []).map((report) => {
+    const runIdeas = byReport.get(report.id) || [];
+    const availableDays = calendarDaysSince(report.run_date);
+    const matureIdeas = runIdeas.filter((idea) => availableDays >= requiredDaysForIdea(idea));
+    const requiredDays = runIdeas.length ? Math.min(...runIdeas.map(requiredDaysForIdea)) : null;
+    const nextRequiredDays = runIdeas
+      .map(requiredDaysForIdea)
+      .filter((days) => availableDays < days)
+      .sort((a, b) => a - b)[0] ?? null;
+    return {
+      ...report,
+      idea_count: runIdeas.length,
+      mature_idea_count: matureIdeas.length,
+      pending_idea_count: runIdeas.length - matureIdeas.length,
+      available_days: availableDays,
+      required_days: requiredDays,
+      ready: matureIdeas.length > 0,
+      ready_on: requiredDays === null ? null : readyDate(report.run_date, requiredDays),
+      next_ready_on: nextRequiredDays === null ? null : readyDate(report.run_date, nextRequiredDays),
+      horizons: [...new Set(runIdeas.map((idea) => idea.horizon).filter(Boolean))],
+      symbols: runIdeas.slice(0, 8).map((idea) => idea.symbol),
+    };
+  }));
+});
+
 backtestsRoutes.get("/runs/:id", requireUser, async (c) => {
   const id = c.req.param("id");
   const { data: run, error } = await db.from("backtest_runs").select("*").eq("id", id).maybeSingle();
@@ -321,17 +379,28 @@ backtestsRoutes.post("/run/:reportRunId", requireAdmin, async (c) => {
     .eq("report_run_id", reportRunId)
     .limit(200);
   if (ideasError) return c.json({ detail: "Failed to load report ideas" }, 500);
-  const requiredDays = Math.max(
-    ENTRY_WINDOW_DAYS + 2,
-    ...(ideas || []).map((idea) => ENTRY_WINDOW_DAYS + (HORIZON_DAYS[idea.horizon || "weekly"] || 7) + 2),
-  );
-  const ageDays = calendarDaysSince(report.run_date);
-  if ((ideas?.length || 0) > 0 && ageDays < requiredDays) {
+  if (!ideas?.length) {
     return c.json({
-      detail: `Too early to backtest this report. Run date ${report.run_date} needs about ${requiredDays} calendar days of forward price data; only ${ageDays} days are available.`,
+      detail: `This report has no generated trade ideas to backtest.`,
       run_date: report.run_date,
-      required_days: requiredDays,
+      ideas_total: 0,
+      mature_ideas: 0,
+    }, 409);
+  }
+
+  const ageDays = calendarDaysSince(report.run_date);
+  const matureIdeas = (ideas || []).filter((idea) => ageDays >= requiredDaysForIdea(idea));
+  if (!matureIdeas.length) {
+    const nextRequiredDays = Math.min(...(ideas || []).map(requiredDaysForIdea));
+    return c.json({
+      detail: `Too early to backtest this report. The first ideas from ${report.run_date} are ready on ${readyDate(report.run_date, nextRequiredDays)}.`,
+      run_date: report.run_date,
+      required_days: nextRequiredDays,
       available_days: ageDays,
+      ideas_total: ideas.length,
+      mature_ideas: 0,
+      pending_ideas: ideas.length,
+      ready_on: readyDate(report.run_date, nextRequiredDays),
     }, 409);
   }
 
@@ -342,25 +411,20 @@ backtestsRoutes.post("/run/:reportRunId", requireAdmin, async (c) => {
       run_date: report.run_date,
       status: "running",
       triggered_by: user.email,
-      trades_count: ideas?.length || 0,
+      trades_count: matureIdeas.length,
+      summary: {
+        ideas_total: ideas.length,
+        mature_ideas: matureIdeas.length,
+        pending_ideas: ideas.length - matureIdeas.length,
+        available_days: ageDays,
+      },
     })
     .select("*")
     .single();
   if (created.error || !created.data) return c.json({ detail: "Failed to create backtest run" }, 500);
   const backtestId = created.data.id;
 
-  if (!ideas || ideas.length === 0) {
-    const summary = summarize([]);
-    await db.from("backtest_runs").update({
-      status: "empty",
-      summary,
-      trades_count: 0,
-      finished_at: new Date().toISOString(),
-    }).eq("id", backtestId);
-    return c.json({ ...created.data, status: "empty", summary, trades: [] });
-  }
-
-  const trades = await runPool(ideas as Idea[], 6, (idea) => runOneIdea(idea, report.run_date));
+  const trades = await runPool(matureIdeas as Idea[], 6, (idea) => runOneIdea(idea, report.run_date));
   const rows = trades.map((trade) => ({
     ...trade,
     backtest_run_id: backtestId,
@@ -378,7 +442,13 @@ backtestsRoutes.post("/run/:reportRunId", requireAdmin, async (c) => {
     }
   }
 
-  const summary = summarize(rows);
+  const summary = {
+    ...summarize(rows),
+    ideas_total: ideas.length,
+    mature_ideas: matureIdeas.length,
+    pending_ideas: ideas.length - matureIdeas.length,
+    available_days: ageDays,
+  };
   const { data: updated } = await db
     .from("backtest_runs")
     .update({
