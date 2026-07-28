@@ -292,6 +292,52 @@ async function runOneIdea(idea: Idea, runDate: string) {
   }
 }
 
+function nullableNumber(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function nullableInteger(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isInteger(n) ? n : null;
+}
+
+function nullableText(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  return String(value);
+}
+
+export function backtestTradeRow(trade: Record<string, unknown>, backtestRunId: string, reportRunId: string) {
+  return {
+    backtest_run_id: backtestRunId,
+    report_run_id: reportRunId,
+    trade_idea_id: nullableText(trade.trade_idea_id),
+    symbol: String(trade.symbol || ""),
+    name: nullableText(trade.name),
+    sector: nullableText(trade.sector),
+    direction: nullableText(trade.direction),
+    horizon: nullableText(trade.horizon),
+    conviction: nullableNumber(trade.conviction),
+    entry_low: nullableNumber(trade.entry_low),
+    entry_high: nullableNumber(trade.entry_high),
+    stop_loss: nullableNumber(trade.stop_loss),
+    target_low: nullableNumber(trade.target_low),
+    target_high: nullableNumber(trade.target_high),
+    entry_date: nullableText(trade.entry_date),
+    exit_date: nullableText(trade.exit_date),
+    entry_price: nullableNumber(trade.entry_price),
+    exit_price: nullableNumber(trade.exit_price),
+    holding_days: nullableInteger(trade.holding_days),
+    return_pct: nullableNumber(trade.return_pct),
+    outcome: String(trade.outcome || "error"),
+    target1_date: nullableText(trade.target1_date),
+    target1_price: nullableNumber(trade.target1_price),
+    trailing_stop: nullableNumber(trade.trailing_stop),
+    partial_exit_pct: nullableNumber(trade.partial_exit_pct) ?? PARTIAL_EXIT_PCT,
+    error: nullableText(trade.error),
+  };
+}
+
 backtestsRoutes.get("/runs", requireUser, async (c) => {
   const limit = Math.min(100, Math.max(1, Number(c.req.query("limit") || "50")));
   const { data, error } = await db
@@ -367,7 +413,7 @@ backtestsRoutes.get("/runs/:id", requireUser, async (c) => {
 });
 
 backtestsRoutes.post("/run/:reportRunId", requireAdmin, async (c) => {
-  const reportRunId = c.req.param("reportRunId");
+  const reportRunId = String(c.req.param("reportRunId") || "");
   const user = c.get("user");
   const { data: report, error: reportError } = await db
     .from("report_runs")
@@ -426,23 +472,32 @@ backtestsRoutes.post("/run/:reportRunId", requireAdmin, async (c) => {
     .select("*")
     .single();
   if (created.error || !created.data) return c.json({ detail: "Failed to create backtest run" }, 500);
-  const backtestId = created.data.id;
+  const backtestId = String(created.data.id);
 
   const trades = await runPool(matureIdeas as Idea[], 6, (idea) => runOneIdea(idea, report.run_date));
-  const rows = trades.map((trade) => ({
-    ...trade,
-    backtest_run_id: backtestId,
-    report_run_id: reportRunId,
-  }));
+  const rows = trades.map((trade) => backtestTradeRow(trade, backtestId, reportRunId));
   if (rows.length) {
     const { error: insertError } = await db.from("backtest_trades").insert(rows);
     if (insertError) {
+      console.error("Failed to save backtest trades", {
+        reportRunId,
+        backtestId,
+        code: insertError.code,
+        message: insertError.message,
+        details: insertError.details,
+        hint: insertError.hint,
+        outcomes: rows.map((row) => row.outcome),
+      });
       await db.from("backtest_runs").update({
         status: "failed",
-        error: insertError.message,
+        error: [insertError.message, insertError.details, insertError.hint].filter(Boolean).join(" | "),
         finished_at: new Date().toISOString(),
       }).eq("id", backtestId);
-      return c.json({ detail: "Failed to save backtest trades" }, 500);
+      return c.json({
+        detail: "Failed to save backtest trades",
+        error: insertError.message,
+        code: insertError.code,
+      }, 500);
     }
   }
 

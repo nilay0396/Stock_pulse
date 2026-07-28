@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { requiredDaysForIdea, simulateTrade } from "../routes/backtests.js";
+import { backtestTradeRow, requiredDaysForIdea, simulateTrade } from "../routes/backtests.js";
 import type { DatedOhlcvBar } from "../lib/market/yahoo.js";
 
 const idea = {
@@ -58,4 +58,32 @@ test("backtest records trailing stop instead of calling target 1 a completed win
 test("backtest maturity rule includes entry window, horizon and buffer", () => {
   assert.equal(requiredDaysForIdea({ horizon: "weekly" }), 12);
   assert.equal(requiredDaysForIdea({ horizon: "monthly" }), 35);
+});
+
+test("backtest trade rows keep a consistent bulk insert shape", () => {
+  const base = {
+    trade_idea_id: "idea-1",
+    symbol: "TEST",
+    outcome: "no_entry",
+  };
+  const withTarget = {
+    ...base,
+    outcome: "target_1_hit",
+    entry_price: 100,
+    exit_price: 105,
+    return_pct: 5,
+    target1_date: "2026-07-17",
+    target1_price: 110,
+    trailing_stop: 103,
+  };
+
+  const rows = [
+    backtestTradeRow(base, "bt-1", "report-1"),
+    backtestTradeRow(withTarget, "bt-1", "report-1"),
+  ];
+
+  assert.deepEqual(Object.keys(rows[0]).sort(), Object.keys(rows[1]).sort());
+  assert.equal(rows[0].target1_date, null);
+  assert.equal(rows[1].target1_date, "2026-07-17");
+  assert.equal(rows[0].partial_exit_pct, 50);
 });
