@@ -338,6 +338,31 @@ export function backtestTradeRow(trade: Record<string, unknown>, backtestRunId: 
   };
 }
 
+function legacyBacktestOutcome(outcomeName: string): string {
+  if (outcomeName === "target_1_hit") return "time_stop";
+  if (outcomeName === "hit_trailing_stop") return "hit_stop";
+  return outcomeName;
+}
+
+function legacyBacktestTradeRow(row: ReturnType<typeof backtestTradeRow>) {
+  const {
+    target1_date: _target1Date,
+    target1_price: _target1Price,
+    trailing_stop: _trailingStop,
+    partial_exit_pct: _partialExitPct,
+    ...legacy
+  } = row;
+  return {
+    ...legacy,
+    outcome: legacyBacktestOutcome(row.outcome),
+  };
+}
+
+function isModernBacktestSchemaMissing(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === "PGRST204" && /target1_|trailing_stop|partial_exit_pct/i.test(error.message || "");
+}
+
 backtestsRoutes.get("/runs", requireUser, async (c) => {
   const limit = Math.min(100, Math.max(1, Number(c.req.query("limit") || "50")));
   const { data, error } = await db
@@ -477,7 +502,24 @@ backtestsRoutes.post("/run/:reportRunId", requireAdmin, async (c) => {
   const trades = await runPool(matureIdeas as Idea[], 6, (idea) => runOneIdea(idea, report.run_date));
   const rows = trades.map((trade) => backtestTradeRow(trade, backtestId, reportRunId));
   if (rows.length) {
-    const { error: insertError } = await db.from("backtest_trades").insert(rows);
+    const inserted = await db.from("backtest_trades").insert(rows);
+    let insertError = inserted.error;
+
+    if (isModernBacktestSchemaMissing(insertError)) {
+      const legacyRows = rows.map(legacyBacktestTradeRow);
+      const legacyInserted = await db.from("backtest_trades").insert(legacyRows);
+      insertError = legacyInserted.error;
+      if (!insertError) {
+        console.warn("Saved backtest trades using legacy schema fallback", {
+          reportRunId,
+          backtestId,
+          originalError: inserted.error?.message,
+          modernOutcomes: rows.map((row) => row.outcome),
+          savedOutcomes: legacyRows.map((row) => row.outcome),
+        });
+      }
+    }
+
     if (insertError) {
       console.error("Failed to save backtest trades", {
         reportRunId,
