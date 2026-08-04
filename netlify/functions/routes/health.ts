@@ -107,6 +107,79 @@ healthRoutes.get("/health/reports", async (c) => {
   });
 });
 
+healthRoutes.get("/health/explorer", async (c) => {
+  const { count: universeCount, error: universeError } = await db
+    .from("stock_universe")
+    .select("*", { count: "exact", head: true });
+  if (universeError) return c.json({ status: "error", detail: "Failed to load explorer universe diagnostics" }, 500);
+
+  const [{ count: otherCount }, { count: unknownIndustryCount }, { count: technicalCount }] = await Promise.all([
+    db.from("stock_universe").select("*", { count: "exact", head: true }).eq("sector", "Other"),
+    db.from("stock_universe").select("*", { count: "exact", head: true }).eq("industry", "Unknown"),
+    db.from("technical_snapshots").select("*", { count: "exact", head: true }),
+  ]);
+
+  const { data: latestReport } = await db
+    .from("report_runs")
+    .select("id, run_date, started_at, status")
+    .eq("status", "success")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { count: latestScoreCount } = latestReport?.id
+    ? await db.from("stock_scores").select("*", { count: "exact", head: true }).eq("report_run_id", latestReport.id)
+    : { count: 0 };
+
+  const { data: scoreRows } = latestReport?.id
+    ? await db
+      .from("stock_scores")
+      .select("symbol,sector,direction,conviction,technical,fundamental,macro_sector,data_confidence_score")
+      .eq("report_run_id", latestReport.id)
+      .order("conviction", { ascending: false })
+      .limit(25)
+    : { data: [] };
+
+  const { data: sectorRows } = await db
+    .from("stock_universe")
+    .select("sector")
+    .limit(5000);
+  const sectorCounts = countBy(sectorRows || [], "sector");
+
+  const { data: technicalRows } = await db
+    .from("technical_snapshots")
+    .select("as_of")
+    .order("as_of", { ascending: false })
+    .limit(1);
+
+  const scoredCoveragePct = universeCount ? Math.round(((latestScoreCount || 0) / universeCount) * 10000) / 100 : 0;
+  return c.json({
+    status: "ok",
+    today_ist: todayIst(),
+    universe: {
+      total: universeCount || 0,
+      sector_other: otherCount || 0,
+      industry_unknown: unknownIndustryCount || 0,
+      sector_counts: Object.fromEntries(Object.entries(sectorCounts).sort((a, b) => b[1] - a[1]).slice(0, 20)),
+      source: "stock_universe populated from Kite NSE EQ cache plus curated seed rows",
+      known_scope: "NSE EQ symbols only; excludes ETFs, REITs/InvITs, debt/gilt products and several non-ordinary series.",
+    },
+    latest_report: latestReport || null,
+    explorer_table: {
+      endpoint: "/ideas/scores",
+      frontend_requested_limit: 500,
+      backend_max_limit: 500,
+      latest_scored_rows: latestScoreCount || 0,
+      scored_coverage_pct: scoredCoveragePct,
+      top_rows: scoreRows || [],
+    },
+    technical_snapshots: {
+      total: technicalCount || 0,
+      latest_as_of: technicalRows?.[0]?.as_of || null,
+    },
+  });
+});
+
 healthRoutes.get("/readiness", async (c) => {
   const { count: universeCount } = await db
     .from("stock_universe")
