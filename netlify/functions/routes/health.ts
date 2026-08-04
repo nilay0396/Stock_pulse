@@ -26,6 +26,19 @@ function countBy<T extends Record<string, unknown>>(rows: T[], key: keyof T): Re
   return out;
 }
 
+async function selectPaged<T extends Record<string, unknown>>(table: string, columns: string, pageSize = 1000, maxRows = 10000): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; from < maxRows; from += pageSize) {
+    const to = from + pageSize - 1;
+    const { data, error } = await db.from(table).select(columns).range(from, to);
+    if (error) throw new Error(error.message);
+    const rows = ((data || []) as unknown) as T[];
+    out.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+  return out;
+}
+
 healthRoutes.get("/health", async (c) => {
   const { data: lastReport } = await db
     .from("report_runs")
@@ -131,19 +144,16 @@ healthRoutes.get("/health/explorer", async (c) => {
     ? await db.from("stock_scores").select("*", { count: "exact", head: true }).eq("report_run_id", latestReport.id)
     : { count: 0 };
 
-  const { data: scoreRows } = latestReport?.id
+  const { data: scoreRows, error: scoreRowsError } = latestReport?.id
     ? await db
       .from("stock_scores")
-      .select("symbol,sector,direction,conviction,technical,fundamental,macro_sector,data_confidence_score")
+      .select("*")
       .eq("report_run_id", latestReport.id)
       .order("conviction", { ascending: false })
       .limit(25)
-    : { data: [] };
+    : { data: [], error: null };
 
-  const { data: sectorRows } = await db
-    .from("stock_universe")
-    .select("sector")
-    .limit(5000);
+  const sectorRows = await selectPaged("stock_universe", "sector");
   const sectorCounts = countBy(sectorRows || [], "sector");
 
   const { data: technicalRows } = await db
@@ -171,7 +181,17 @@ healthRoutes.get("/health/explorer", async (c) => {
       backend_max_limit: 500,
       latest_scored_rows: latestScoreCount || 0,
       scored_coverage_pct: scoredCoveragePct,
-      top_rows: scoreRows || [],
+      top_rows_error: scoreRowsError?.message || null,
+      top_rows: (scoreRows || []).map((row) => ({
+        symbol: row.symbol,
+        sector: row.sector,
+        direction: row.direction,
+        conviction: row.conviction,
+        technical: row.technical,
+        fundamental: row.fundamental,
+        macro_sector: row.macro_sector,
+        data_confidence_score: row.data_confidence_score ?? null,
+      })),
     },
     technical_snapshots: {
       total: technicalCount || 0,
