@@ -16,6 +16,17 @@ export const stocksRoutes = new Hono<{ Variables: Variables }>();
 type Dict = Record<string, any>;
 type ChartInterval = "minute" | "5minute" | "15minute" | "60minute" | "day";
 
+async function latestSuccessfulRunId(): Promise<string | null> {
+  const { data } = await db
+    .from("report_runs")
+    .select("id")
+    .eq("status", "success")
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.id ?? null;
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -252,6 +263,143 @@ stocksRoutes.get("/universe/stats", requireUser, async (c) => {
     return c.json({ detail: "Failed to load universe stats" }, 500);
   }
   return c.json({ total: total.count ?? 0, curated: curated.count ?? 0, other: other.count ?? 0 });
+});
+
+stocksRoutes.get("/sectors", requireUser, async (c) => {
+  const rows: Dict[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db.from("stock_universe").select("sector").range(from, from + 999);
+    if (error) return c.json({ detail: "Failed to load sectors" }, 500);
+    rows.push(...(data || []));
+    if ((data || []).length < 1000) break;
+  }
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const sector = row.sector || "Other";
+    counts.set(sector, (counts.get(sector) || 0) + 1);
+  }
+  return c.json([...counts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => {
+    if (a.name === "Other") return 1;
+    if (b.name === "Other") return -1;
+    return a.name.localeCompare(b.name);
+  }));
+});
+
+// GET /stocks/explorer
+// Universe-first explorer endpoint. Browsing/searching starts from
+// stock_universe so unscored names remain visible; conviction filters switch
+// to the latest score set because unscored rows do not have a conviction.
+stocksRoutes.get("/explorer", requireUser, async (c) => {
+  const q = (c.req.query("q") || "").trim();
+  const sector = c.req.query("sector") || "";
+  const scored = c.req.query("scored") || "all";
+  const minConviction = Number(c.req.query("min_conviction") || "0");
+  const limit = Math.min(100, Math.max(10, Number(c.req.query("limit") || "50")));
+  const offset = Math.max(0, Number(c.req.query("offset") || "0"));
+  const needle = q.replace(/[%_]/g, "");
+  const runId = await latestSuccessfulRunId();
+  const scoreMode = scored === "scored" || minConviction > 0;
+
+  let total = 0;
+  let universeRows: Dict[] = [];
+  let scoreRows: Dict[] = [];
+
+  if (scoreMode && runId) {
+    let scoreQuery = db.from("stock_scores").select("*").eq("report_run_id", runId);
+    if (minConviction) scoreQuery = scoreQuery.gte("conviction", minConviction);
+    const { data: allScores, error: scoreError } = await scoreQuery.order("conviction", { ascending: false }).limit(1000);
+    if (scoreError) return c.json({ detail: "Failed to load explorer scores" }, 500);
+
+    const scoreSymbols = (allScores || []).map((row) => row.symbol).filter(Boolean);
+    const { data: universes, error: universeError } = scoreSymbols.length
+      ? await db.from("stock_universe").select("*").in("symbol", scoreSymbols)
+      : { data: [], error: null };
+    if (universeError) return c.json({ detail: "Failed to load explorer universe rows" }, 500);
+
+    const universeBySymbol = new Map((universes || []).map((row) => [row.symbol, row]));
+    const filteredScores = (allScores || []).filter((scoreRow) => {
+      const universe = universeBySymbol.get(scoreRow.symbol) || {};
+      if (sector && universe.sector !== sector) return false;
+      if (needle) {
+        const hay = `${scoreRow.symbol || ""} ${universe.name || ""}`.toLowerCase();
+        if (!hay.includes(needle.toLowerCase())) return false;
+      }
+      return true;
+    });
+    total = filteredScores.length;
+    scoreRows = filteredScores.slice(offset, offset + limit);
+    const pageSymbols = scoreRows.map((row) => row.symbol);
+    universeRows = pageSymbols.map((symbol) => universeBySymbol.get(symbol)).filter(Boolean);
+  } else {
+    let universeQuery = db.from("stock_universe").select("*", { count: "exact" });
+    if (sector) universeQuery = universeQuery.eq("sector", sector);
+    if (needle) universeQuery = universeQuery.or(`symbol.ilike.%${needle}%,name.ilike.%${needle}%`);
+    if (scored === "unscored" && runId) {
+      const { data: scoredSymbols, error: scoredError } = await db
+        .from("stock_scores")
+        .select("symbol")
+        .eq("report_run_id", runId)
+        .limit(1000);
+      if (scoredError) return c.json({ detail: "Failed to load scored symbols" }, 500);
+      const known = (scoredSymbols || []).map((row) => row.symbol).filter(Boolean);
+      if (known.length) universeQuery = universeQuery.not("symbol", "in", `(${known.map((symbol) => `"${symbol}"`).join(",")})`);
+    }
+    const { data, error, count } = await universeQuery.order("symbol", { ascending: true }).range(offset, offset + limit - 1);
+    if (error) return c.json({ detail: "Failed to load explorer universe" }, 500);
+    universeRows = data || [];
+    total = count ?? 0;
+
+    if (runId && universeRows.length) {
+      const pageSymbols = universeRows.map((row) => row.symbol);
+      const scores = await db.from("stock_scores").select("*").eq("report_run_id", runId).in("symbol", pageSymbols);
+      if (scores.error) return c.json({ detail: "Failed to load explorer scores" }, 500);
+      scoreRows = scores.data || [];
+    }
+  }
+
+  const pageSymbols = universeRows.map((row) => row.symbol).filter(Boolean);
+  const [{ data: technicalRows }, { count: universeCount }, { count: latestScoreCount }] = await Promise.all([
+    pageSymbols.length ? db.from("technical_snapshots").select("*").in("symbol", pageSymbols) : Promise.resolve({ data: [] }),
+    db.from("stock_universe").select("*", { count: "exact", head: true }),
+    runId ? db.from("stock_scores").select("*", { count: "exact", head: true }).eq("report_run_id", runId) : Promise.resolve({ count: 0 }),
+  ]);
+
+  const scoreBySymbol = new Map((scoreRows || []).map((row) => [row.symbol, row]));
+  const technicalBySymbol = new Map((technicalRows || []).map((row) => [row.symbol, row]));
+  const rows = universeRows.map((universe) => {
+    const score = scoreBySymbol.get(universe.symbol) || null;
+    const technical = technicalBySymbol.get(universe.symbol) || null;
+    return {
+      symbol: universe.symbol,
+      name: universe.name,
+      yf_symbol: universe.yf_symbol,
+      sector: universe.sector,
+      industry: universe.industry,
+      market_cap_tier: universe.market_cap_tier,
+      scored: Boolean(score),
+      has_technicals: Boolean(technical),
+      score,
+      technicals: technical,
+      data_state: {
+        sector_known: Boolean(universe.sector && universe.sector !== "Other"),
+        industry_known: Boolean(universe.industry && universe.industry !== "Unknown"),
+        scored: Boolean(score),
+        technicals: Boolean(technical),
+      },
+    };
+  });
+
+  return c.json({
+    rows,
+    total,
+    limit,
+    offset,
+    next_offset: offset + rows.length < total ? offset + rows.length : null,
+    latest_report_run_id: runId,
+    universe_total: universeCount ?? 0,
+    latest_scored_rows: latestScoreCount ?? 0,
+    scored_coverage_pct: universeCount ? Math.round(((latestScoreCount || 0) / universeCount) * 10000) / 100 : 0,
+  });
 });
 
 // GET /stocks/search?q=rel&limit=10

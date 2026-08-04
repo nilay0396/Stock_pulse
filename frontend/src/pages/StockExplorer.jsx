@@ -1,45 +1,70 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { ChevronLeft, ChevronRight, RefreshCw, Search } from "lucide-react";
 import api from "../lib/api";
 import { useCached } from "../lib/cache";
-import { fmtNum, directionBadge } from "../lib/fmt";
+import { fmtNum, directionBadge, pctColor } from "../lib/fmt";
 import ConvictionBar from "../components/ConvictionBar";
 import { SkeletonTableRows } from "../components/SkeletonBits";
+import ErrorState from "../components/ErrorState";
+
+const PAGE_SIZE = 50;
+
+function DataBadge({ ok, label }) {
+  return (
+    <span
+      className="badge"
+      style={{
+        color: ok ? "var(--bullish)" : "var(--text-muted)",
+        borderColor: ok ? "rgba(0,163,108,0.25)" : "var(--border)",
+        background: ok ? "rgba(0,163,108,0.08)" : "var(--surface-elevated)",
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function sortSectors(items) {
+  return [...items].sort((a, b) => {
+    if (a.name === "Other") return 1;
+    if (b.name === "Other") return -1;
+    return a.name.localeCompare(b.name);
+  });
+}
 
 export default function StockExplorer() {
   const [q, setQ] = useState("");
   const [sector, setSector] = useState("");
   const [minConv, setMinConv] = useState(0);
+  const [scoreMode, setScoreMode] = useState("all");
+  const [page, setPage] = useState(0);
 
-  const { data: rows = [], loading: lRows } = useCached("explorer:scores",
-    () => api.get("/ideas/scores", { params: { limit: 500 } }).then((r) => r.data));
-  const { data: uni = [], loading: lUni } = useCached("explorer:universe",
-    () => api.get("/stocks/universe").then((r) => r.data));
+  useEffect(() => { setPage(0); }, [q, sector, minConv, scoreMode]);
 
-  const uniMap = useMemo(() => Object.fromEntries(uni.map((x) => [x.symbol, x])), [uni]);
-  const sectors = useMemo(() => Array.from(new Set(uni.map((x) => x.sector))).sort(), [uni]);
+  const effectiveScoreMode = minConv > 0 ? "scored" : scoreMode;
+  const key = `explorer:v2:${q}:${sector}:${minConv}:${effectiveScoreMode}:${page}`;
+  const { data, loading, error, refetch } = useCached(key, () => api.get("/stocks/explorer", {
+    params: {
+      q: q || undefined,
+      sector: sector || undefined,
+      min_conviction: minConv || undefined,
+      scored: effectiveScoreMode,
+      limit: PAGE_SIZE,
+      offset: page * PAGE_SIZE,
+    },
+  }).then((r) => r.data));
 
-  const filtered = rows.filter((r) => {
-    if (r.conviction < minConv) return false;
-    if (sector && r.sector !== sector) return false;
-    if (q && !r.symbol.toLowerCase().includes(q.toLowerCase()) && !(r.name || "").toLowerCase().includes(q.toLowerCase())) return false;
-    return true;
-  });
+  const { data: sectors = [] } = useCached("explorer:sectors:v1",
+    () => api.get("/stocks/sectors").then((r) => r.data));
 
-  // Preview what the weekly / monthly idea pool would look like at the
-  // current threshold (pure scoring — earnings calendar still applies on top
-  // in the real pipeline). Useful for gauging strictness on quiet weeks.
-  const weeklyPreview = rows.filter(
-    (r) => r.passes_filters && r.conviction >= Math.max(minConv, 72) && r.technical >= 70,
-  ).length;
-  const monthlyPreview = rows.filter(
-    (r) => r.passes_filters && r.conviction >= Math.max(minConv, 75)
-      && r.fundamental >= 70 && r.macro_sector >= 65,
-  ).length;
-  const atOrAbove = rows.filter((r) => r.conviction >= minConv).length;
-
-  const showRowsSk = lRows && rows.length === 0;
-  const initial = (lRows && rows.length === 0) || (lUni && uni.length === 0);
+  const rows = data?.rows || [];
+  const total = data?.total || 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const start = total ? page * PAGE_SIZE + 1 : 0;
+  const end = page * PAGE_SIZE + rows.length;
+  const showRowsSk = loading && rows.length === 0;
+  const sectorOptions = useMemo(() => sortSectors(sectors), [sectors]);
 
   return (
     <div className="p-6 md:p-8 flex flex-col gap-5">
@@ -48,17 +73,50 @@ export default function StockExplorer() {
           <div className="overline">Universe</div>
           <h1 className="font-heading text-3xl">Stock Explorer</h1>
           <div className="text-[12px] mt-1 font-mono" style={{ color: "var(--text-muted)" }}>
-            {initial ? "loading…" : `${uni.length} symbols · ${rows.length} scored`}
+            {loading && !data
+              ? "loading..."
+              : `${fmtNum(data?.universe_total || 0, 0)} NSE EQ symbols · ${fmtNum(data?.latest_scored_rows || 0, 0)} scored (${fmtNum(data?.scored_coverage_pct || 0, 2)}%)`}
           </div>
         </div>
+        <button className="btn btn-outline" onClick={refetch} disabled={loading}>
+          <RefreshCw size={14} /> Refresh
+        </button>
       </header>
 
+      <ErrorState error={error} fallback="Stock Explorer failed to load." onRetry={refetch} />
+
       <div className="panel p-4 flex flex-wrap items-end gap-4" data-testid="explorer-filter-bar">
-        <input className="input max-w-[240px]" placeholder="Search symbol / name…" value={q} onChange={(e) => setQ(e.target.value)} data-testid="explorer-search" />
-        <select className="input max-w-[180px]" value={sector} onChange={(e) => setSector(e.target.value)} data-testid="explorer-sector">
-          <option value="">All sectors</option>
-          {sectors.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
+        <label className="flex flex-col gap-1 min-w-[240px]">
+          <span className="overline">Search</span>
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" color="var(--text-muted)" />
+            <input
+              className="input pl-9"
+              placeholder="Symbol or name"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              data-testid="explorer-search"
+            />
+          </div>
+        </label>
+
+        <label className="flex flex-col gap-1 min-w-[190px]">
+          <span className="overline">Sector</span>
+          <select className="input" value={sector} onChange={(e) => setSector(e.target.value)} data-testid="explorer-sector">
+            <option value="">All sectors</option>
+            {sectorOptions.map((s) => <option key={s.name} value={s.name}>{s.name} ({s.count})</option>)}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1 min-w-[170px]">
+          <span className="overline">Coverage</span>
+          <select className="input" value={scoreMode} onChange={(e) => setScoreMode(e.target.value)} data-testid="explorer-scored">
+            <option value="all">All symbols</option>
+            <option value="scored">Scored only</option>
+            <option value="unscored">Unscored only</option>
+          </select>
+        </label>
+
         <div className="flex flex-col gap-1 flex-1 min-w-[260px]">
           <div className="flex items-center justify-between">
             <span className="overline">Min conviction: <b className="font-mono ml-1" style={{ color: "var(--text-primary)" }}>{minConv}</b></span>
@@ -78,15 +136,26 @@ export default function StockExplorer() {
                  className="w-full accent-white cursor-pointer"
                  style={{ height: 4 }}
                  data-testid="conviction-slider" />
-          <div className="flex gap-5 font-mono text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
-            <span data-testid="stat-above">{atOrAbove} stock{atOrAbove === 1 ? "" : "s"} ≥ {minConv}</span>
-            <span data-testid="stat-weekly" style={{ color: weeklyPreview > 0 ? "var(--bullish)" : "var(--text-muted)" }}>
-              Weekly pool: {weeklyPreview}
-            </span>
-            <span data-testid="stat-monthly" style={{ color: monthlyPreview > 0 ? "var(--bullish)" : "var(--text-muted)" }}>
-              Monthly pool: {monthlyPreview}
-            </span>
+          <div className="font-mono text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+            Conviction filters apply to scored symbols only.
           </div>
+        </div>
+      </div>
+
+      <div className="panel p-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="font-mono text-[12px]" style={{ color: "var(--text-muted)" }}>
+          Showing {fmtNum(start, 0)}-{fmtNum(end, 0)} of {fmtNum(total, 0)}
+        </div>
+        <div className="flex items-center gap-2">
+          <button className="btn btn-outline" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0 || loading}>
+            <ChevronLeft size={14} /> Prev
+          </button>
+          <div className="font-mono text-[12px]" style={{ color: "var(--text-muted)" }}>
+            Page {fmtNum(page + 1, 0)} / {fmtNum(totalPages, 0)}
+          </div>
+          <button className="btn btn-outline" onClick={() => setPage((p) => p + 1)} disabled={!data?.next_offset || loading}>
+            Next <ChevronRight size={14} />
+          </button>
         </div>
       </div>
 
@@ -97,38 +166,55 @@ export default function StockExplorer() {
               <th>Symbol</th>
               <th>Sector</th>
               <th className="numeric">Last</th>
+              <th>State</th>
               <th>Direction</th>
               <th className="numeric">Tech</th>
               <th className="numeric">Fund</th>
-              <th className="numeric">Val</th>
-              <th className="numeric">Analyst</th>
-              <th className="numeric">News</th>
               <th className="numeric">Macro</th>
               <th style={{ minWidth: 150 }}>Conviction</th>
+              <th>Data</th>
             </tr>
           </thead>
           <tbody>
-            {showRowsSk ? <SkeletonTableRows cols={11} rows={10} /> : filtered.map((r) => (
-              <tr key={r.id || r.symbol} data-testid={`score-row-${r.symbol}`}>
-                <td>
-                  <Link to={`/explorer/${r.symbol}`} className="font-bold hover:underline">{r.symbol}</Link>
-                  <div className="font-body text-[11px]" style={{ color: "var(--text-muted)" }}>{uniMap[r.symbol]?.name || r.name || ""}</div>
-                </td>
-                <td className="font-body text-[12px]">{r.sector}</td>
-                <td className="numeric">{fmtNum(r.last_close)}</td>
-                <td><span className={directionBadge(r.direction)}>{r.direction}</span></td>
-                <td className="numeric">{fmtNum(r.technical, 0)}</td>
-                <td className="numeric">{fmtNum(r.fundamental, 0)}</td>
-                <td className="numeric">{fmtNum(r.valuation, 0)}</td>
-                <td className="numeric">{fmtNum(r.analyst, 0)}</td>
-                <td className="numeric">{fmtNum(r.event_news, 0)}</td>
-                <td className="numeric">{fmtNum(r.macro_sector, 0)}</td>
-                <td><ConvictionBar value={r.conviction} direction={r.direction} /></td>
-              </tr>
-            ))}
-            {!showRowsSk && filtered.length === 0 && (
-              <tr><td colSpan={11} className="text-center py-10" style={{ color: "var(--text-muted)" }}>
-                No scores available. Run the engine from the Dashboard.
+            {showRowsSk ? <SkeletonTableRows cols={10} rows={10} /> : rows.map((r) => {
+              const score = r.score || {};
+              const tech = r.technicals || {};
+              return (
+                <tr key={r.symbol} data-testid={`explorer-row-${r.symbol}`}>
+                  <td>
+                    <Link to={`/explorer/${r.symbol}`} className="font-bold hover:underline">{r.symbol}</Link>
+                    <div className="font-body text-[11px]" style={{ color: "var(--text-muted)" }}>{r.name || ""}</div>
+                  </td>
+                  <td className="font-body text-[12px]">
+                    {r.sector || "Other"}
+                    {!r.data_state?.sector_known && <div className="font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>untagged</div>}
+                  </td>
+                  <td className="numeric" style={{ color: pctColor(tech.change_pct_1d) }}>
+                    {fmtNum(tech.last_close)}
+                    {tech.change_pct_1d !== null && tech.change_pct_1d !== undefined && (
+                      <div className="font-mono text-[10px]">{fmtNum(tech.change_pct_1d, 2)}%</div>
+                    )}
+                  </td>
+                  <td>
+                    <DataBadge ok={r.scored} label={r.scored ? "scored" : "not scored"} />
+                  </td>
+                  <td>{score.direction ? <span className={directionBadge(score.direction)}>{score.direction}</span> : <span style={{ color: "var(--text-muted)" }}>-</span>}</td>
+                  <td className="numeric">{fmtNum(score.technical, 0)}</td>
+                  <td className="numeric">{fmtNum(score.fundamental, 0)}</td>
+                  <td className="numeric">{fmtNum(score.macro_sector, 0)}</td>
+                  <td>{r.scored ? <ConvictionBar value={score.conviction} direction={score.direction} /> : <span style={{ color: "var(--text-muted)" }}>-</span>}</td>
+                  <td>
+                    <div className="flex gap-1 flex-wrap">
+                      <DataBadge ok={r.has_technicals} label="tech" />
+                      <DataBadge ok={r.data_state?.industry_known} label="industry" />
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {!showRowsSk && rows.length === 0 && (
+              <tr><td colSpan={10} className="text-center py-10" style={{ color: "var(--text-muted)" }}>
+                No symbols match the current filters.
               </td></tr>
             )}
           </tbody>
