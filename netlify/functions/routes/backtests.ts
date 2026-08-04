@@ -464,18 +464,21 @@ backtestsRoutes.post("/run/:reportRunId", requireAdmin, async (c) => {
   }
 
   const ageDays = calendarDaysSince(report.run_date);
-  const matureIdeas = (ideas || []).filter((idea) => ageDays >= requiredDaysForIdea(idea));
+  const tradeableIdeas = (ideas || []).filter((idea) => ["bullish", "bearish"].includes(String(idea.direction || "")));
+  const matureIdeas = tradeableIdeas.filter((idea) => ageDays >= requiredDaysForIdea(idea));
   if (!matureIdeas.length) {
-    const nextRequiredDays = Math.min(...(ideas || []).map(requiredDaysForIdea));
+    const nextRequiredDays = tradeableIdeas.length ? Math.min(...tradeableIdeas.map(requiredDaysForIdea)) : null;
     return c.json({
-      detail: `Too early to backtest this report. The first ideas from ${report.run_date} are ready on ${readyDate(report.run_date, nextRequiredDays)}.`,
+      detail: tradeableIdeas.length
+        ? `Too early to backtest this report. The first ideas from ${report.run_date} are ready on ${readyDate(report.run_date, nextRequiredDays || 0)}.`
+        : "This report has watch-only ideas but no actionable bullish/bearish trade ideas to backtest.",
       run_date: report.run_date,
       required_days: nextRequiredDays,
       available_days: ageDays,
       ideas_total: ideas.length,
       mature_ideas: 0,
-      pending_ideas: ideas.length,
-      ready_on: readyDate(report.run_date, nextRequiredDays),
+      pending_ideas: tradeableIdeas.length,
+      ready_on: nextRequiredDays === null ? null : readyDate(report.run_date, nextRequiredDays),
     }, 409);
   }
 

@@ -632,15 +632,27 @@ async function applyFinalIdeaReview(
       approved.push(idea);
     } else {
       rejected.push({
-        symbol: idea.symbol,
-        horizon: idea.horizon,
-        conviction: idea.conviction,
-        reason: review.reason,
-        red_flags: review.red_flags,
+        ...idea,
+        direction: "watch",
+        ai_review: review,
+        reasons: [
+          `Watch only: ${review.reason || "Final review did not approve this as a trade."}`,
+          ...(idea.reasons || []),
+        ].slice(0, 6),
+        risks: [
+          ...(Array.isArray(review.red_flags) ? review.red_flags : []),
+          ...(idea.risks || []),
+        ].slice(0, 6),
       });
     }
   }
   return { approved, rejected };
+}
+
+function reviewedWatchFallback(reviewed: Dict[], max = 5): Dict[] {
+  return reviewed
+    .sort((a, b) => Number(b.effective_conviction ?? b.horizon_conviction ?? b.conviction ?? 0) - Number(a.effective_conviction ?? a.horizon_conviction ?? a.conviction ?? 0))
+    .slice(0, max);
 }
 
 // ---------------------------------------------------------------------------
@@ -805,6 +817,9 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
     weekly = weeklyReview.approved;
     monthly = monthlyReview.approved;
     const aiRejected = [...weeklyReview.rejected, ...monthlyReview.rejected];
+    if (!weekly.length && !monthly.length && aiRejected.length) {
+      weekly = reviewedWatchFallback(aiRejected);
+    }
     const ctxDraft = buildContext(runDate, runId, macro, scores, sectorBreadth, commoditySector, weekly, monthly, universe.length, marketRegime, performanceCalibration, flows);
     ctxDraft.followups = followups;
     ctxDraft.ai_rejected_ideas = aiRejected;
@@ -845,7 +860,8 @@ export async function generateReport(opts: RunOptions = {}): Promise<Dict> {
       }));
       const { error } = await db.from("trade_ideas").insert(ideaRows);
       if (error) throw new Error(`trade_ideas insert failed: ${error.message}`);
-      await createLifecycleRowsForIdeas([...weekly, ...monthly], runDate);
+      const lifecycleIdeas = [...weekly, ...monthly].filter((idea) => ["bullish", "bearish"].includes(String(idea.direction || "")));
+      if (lifecycleIdeas.length) await createLifecycleRowsForIdeas(lifecycleIdeas, runDate);
     }
 
     // Persist news items (shortlist headlines).
